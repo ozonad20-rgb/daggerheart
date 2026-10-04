@@ -399,7 +399,7 @@ const DB = {
 };
 
 const K = {
-  user:  u => `dh:user:${u.toLowerCase()}`,
+  user:  u => `dh:user:${u.toLowerCase().replace(/\//g,'%2F')}`,   // '/' não é permitido em IDs do Firestore
   camp:  c => `dh:camp:${c}`,
   cover: c => `dh:cover:${c}`,
   sheets:c => `dh:sheets:${c}`,
@@ -929,7 +929,7 @@ const state = {
   spotlight: null, spotlightExpandido: null,
   rollToast: null,
   mundoExpandido: {}, mundoAbrindoId: null, mapaViewer: null,
-  transformando: null,
+  transformando: null, loginForm: null,
   editPaineis: {},
   wizEquipAba: 'fisicas',
   levelUp: null,
@@ -957,6 +957,13 @@ function restaurarFoco(s){
   try{ if(s.ini!=null && el.setSelectionRange) el.setSelectionRange(s.ini, s.fim); }catch(e){}
   try{ el.scrollTop = s.scroll; }catch(e){}
 }
+root.addEventListener('keydown', (e)=>{
+  if(e.key!=='Enter' || e.isComposing || e.shiftKey) return;
+  const id = e.target && e.target.id;
+  if(['inNome','inEmail','inPass','inPass2'].includes(id)){ e.preventDefault(); App.login(); }
+  else if(id==='nomeCamp'){ e.preventDefault(); App.criarCampanha(); }
+  else if(id==='codCamp'){ e.preventDefault(); App.entrarCampanha(); }
+});
 let _ultimoHtml = null;
 function render(){
   const html = View();
@@ -1100,6 +1107,7 @@ App.login = async ()=>{
   const senha = document.getElementById('inPass').value;
   const nomeEl = document.getElementById('inNome');
   const nome = nomeEl? nomeEl.value.trim() : '';
+  state.loginForm = { nome, email };       // mantém o que foi digitado se houver erro (a tela é redesenhada)
   const p2raw = document.getElementById('inPass2');
   const senha2 = p2raw? p2raw.value : '';
   state.err='';
@@ -1131,6 +1139,7 @@ App.login = async ()=>{
   }
 };
 App.sair = async ()=>{
+  state.loginForm = null; state.loginModo = 'entrar';
   try{ localStorage.removeItem('dh:ultimaMesa'); }catch(e){}
   desligarEspiaCartas(); desligarEspiaFichas();
   if(authFB) await authFB.signOut();
@@ -1162,6 +1171,8 @@ App.criarCampanha = async ()=>{
 App.entrarCampanha = async ()=>{
   const cod = document.getElementById('codCamp').value.trim().toUpperCase();
   state.err='';
+  if(!cod){ state.err='Digite o código da campanha.'; return render(); }
+  if(!/^[A-Z0-9]{3,12}$/.test(cod)){ state.err='Código inválido: use só letras e números, como no código que o mestre enviou.'; return render(); }
   const c = await DB.get(K.camp(cod));
   if(!c){ state.err='Código não encontrado. Confira com o mestre.'; return render(); }
   if(c.mestre!==state.usuario.nome && !c.jogadores.includes(state.usuario.nome)){
@@ -1188,7 +1199,8 @@ App.sairDaCampanha = async (cod)=>{
   await recarregarCampanhasHome();
   render();
 };
-App.deletarCampanha = async (cod, nome)=>{
+App.deletarCampanha = async (cod)=>{
+  const alvo = (state.minhasCampanhasCache||[]).find(x=>x.c===cod); const nome = (alvo && alvo.camp && alvo.camp.nome) || cod;
   if(!confirm(`Deletar "${nome}"? Fichas e rolagens serão perdidas.`)) return;
   for(const d of await DB.list(K.sheetPrefix(cod))) await DB.del(d);
   for(const d of await DB.list(K.rollPrefix(cod))) await DB.del(d);
@@ -1488,7 +1500,12 @@ function ligarEspiaExtras(cod){
   }, ()=>{}));
   // dados da campanha (Mundo, contagens, jogadores) ao vivo para quem não é o mestre da edição
   espiaExtrasUnsubs.push(col.doc(K.camp(cod)).onSnapshot(snap=>{
-    if(!state.campanha || state.campanha.codigo!==cod || !snap.exists) return;
+    if(!state.campanha || state.campanha.codigo!==cod) return;
+    if(!snap.exists){   // o mestre apagou a campanha enquanto você estava na mesa
+      alert('Esta campanha foi apagada pelo mestre.');
+      App.voltarHome();
+      return;
+    }
     const v=(snap.data()||{}).value; if(!v) return;
     if(campanhaSaveTimer) return;                       // edição local pendente
     if(v.mundo) hidratarMundo(v.mundo.itens, cod);
@@ -2112,7 +2129,8 @@ App.wizFinalizar = async ()=>{
   render();
 };
 
-App.apagarFicha = async (id, nome)=>{
+App.apagarFicha = async (id)=>{
+  const nome = (state.fichas.find(f=>f.id===id)||{}).nome;
   if(!confirm(`Apagar "${nome||'sem nome'}"?`)) return;
   state.fichas = state.fichas.filter(f=>f.id!==id);
   if(state.abertaId===id) state.abertaId=null;
@@ -2428,7 +2446,8 @@ App.resetarXP = async (id)=>{
   await persistirFichas([id]);
   render();
 };
-App.limparFicha = async (id, nome)=>{
+App.limparFicha = async (id)=>{
+  const nome = (state.fichas.find(f=>f.id===id)||{}).nome;
   if(!confirm(`Limpar a ficha de ${nome||'sem nome'}? Isso apaga todos os campos.`)) return;
   state.fichas = state.fichas.map(f=> f.id===id? {...novaFicha(f.dono), id:f.id} : f);
   await persistirFichas([id]);
@@ -2495,8 +2514,8 @@ function ViewLogin(){
           <button class="btn ${state.loginModo==='criar'?'':'btn-ghost'}" style="flex:1" onclick="App.setLoginModo('criar')">Criar conta</button>
         </div>
         <div class="stack">
-          ${state.loginModo==='criar'? `<div class="field"><label>Nome de exibição</label><input id="inNome" placeholder="ex: Luan, Mestre Luan..."></div>`:''}
-          <div class="field"><label>E-mail</label><input id="inEmail" type="email" placeholder="voce@exemplo.com"></div>
+          ${state.loginModo==='criar'? `<div class="field"><label>Nome de exibição</label><input id="inNome" placeholder="ex: Luan, Mestre Luan..." value="${esc((state.loginForm||{}).nome||'')}"></div>`:''}
+          <div class="field"><label>E-mail</label><input id="inEmail" type="email" placeholder="voce@exemplo.com" value="${esc((state.loginForm||{}).email||'')}"></div>
           <div class="field"><label>Senha</label><input id="inPass" type="password"></div>
           ${state.loginModo==='criar'? `<div class="field"><label>Repita a senha</label><input id="inPass2" type="password"></div>`:''}
         </div>
@@ -2572,7 +2591,7 @@ function ViewHome(){
               <div class="row">
                 <button class="btn btn-sm btn-gold" onclick="App.abrirMesa('${c}')">Abrir mesa</button>
                 ${camp.mestre===u.nome
-                  ? `<button class="btn btn-sm btn-danger" onclick="App.deletarCampanha('${c}','${esc(camp.nome)}')">Deletar campanha</button>`
+                  ? `<button class="btn btn-sm btn-danger" onclick="App.deletarCampanha('${c}')">Deletar campanha</button>`
                   : `<button class="btn btn-sm btn-danger" onclick="App.sairDaCampanha('${c}')">Sair da campanha</button>`}
               </div>
             </div>
@@ -2748,7 +2767,7 @@ function ListaFichasHTML(lista, vazioTxt){
             : f.tipo==='ambiente' ? `${esc(f.ambienteTipo)} · patamar ${f.patamar} · dificuldade ${f.dificuldade}`
             : `${esc(f.papel)} · patamar ${f.patamar} · dificuldade ${f.dificuldade}` }</small>
       </div>
-      <button class="btn btn-sm btn-danger" onclick="App.apagarFicha('${f.id}','${esc(f.nome)}')">Apagar</button>
+      <button class="btn btn-sm btn-danger" onclick="App.apagarFicha('${f.id}')">Apagar</button>
     </div>`).join('')}</div>`;
 }
 
@@ -2972,7 +2991,7 @@ function TabRecompensas(){
         <span style="font-size:14px;">${esc(f.nome)||'Sem nome'} <span class="muted">· ${f.xp||0} XP</span></span>
         <div class="row">
           <button class="btn btn-sm btn-ghost" onclick="App.resetarXP('${f.id}')">Zerar XP</button>
-          <button class="btn btn-sm btn-danger" onclick="App.limparFicha('${f.id}','${esc(f.nome)}')">Limpar ficha</button>
+          <button class="btn btn-sm btn-danger" onclick="App.limparFicha('${f.id}')">Limpar ficha</button>
         </div>
       </div>`).join('')}
     </div></div>
@@ -3916,7 +3935,7 @@ function TransformacaoModal(){
     corpo = `${f.transformacao? `<p style="color:var(--hope);font-size:13px;margin-top:0;">Atenção: um personagem só pode ter uma Transformação. Escolher outra substitui <strong>${esc((TRANSFORMACOES.find(x=>x.id===f.transformacao.id)||{}).nome||'a atual')}</strong>.</p>`:''}
       <p class="muted" style="margin-top:0;font-size:13px;">Escolha a Transformação. Combine com o mestre antes: ela traz um benefício e um custo, e não ocupa espaço no seu loadout de cartas de domínio.</p>
       <div class="stack">${TRANSFORMACOES.map(x=>`<button class="btn btn-block" style="text-align:left;padding:14px;" onclick="App.escolherTransformacao('${x.id}')">
-        <strong style="font-family:var(--display);font-size:1.15rem;color:var(--hope);">${icon(x.icone||'pata',16)} ${esc(x.nome)}</strong><br><span class="muted" style="font-size:.85rem;">${esc(x.resumo)}</span></button>`).join('')}</div>
+        <strong style="font-family:var(--display);font-size:1.15rem;color:var(--hope);">${icon(x.icone||'pata',16)} ${esc(x.nome)}</strong><br><span class="muted" style="font-size:.85rem;font-weight:400;">${esc(x.resumo)}</span></button>`).join('')}</div>
       <div class="row" style="justify-content:flex-end;margin-top:14px;"><button class="btn btn-ghost" onclick="App.fecharTransformacao()">Cancelar</button></div>`;
   } else {
     const def = TRANSFORMACOES.find(x=>x.id===t.escolhida);
