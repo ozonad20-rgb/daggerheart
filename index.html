@@ -111,10 +111,10 @@
 
   /* Balão de rolagens: overlay fixo no canto inferior esquerdo, sempre visível */
   .bubble{position:fixed;bottom:20px;left:20px;z-index:60;}
-  .bubble-closed{width:120px;height:120px;border-radius:18px;border:2px solid var(--hope);background:var(--ink3);
+  .bubble-closed{width:62px;height:62px;border-radius:50%;border:2px solid var(--hope);background:var(--ink3);
                  display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 10px 30px rgba(0,0,0,.5);}
   .bubble-closed .num{font-family:var(--serif);font-size:2.6rem;color:var(--hope);line-height:1;}
-  .bubble-closed .lab{font-size:.85rem;color:var(--parch);margin-top:6px;font-weight:700;}
+  .bubble-closed .lab{display:none;}
   .bubble-open{width:400px;max-width:calc(100vw - 32px);max-height:75vh;display:flex;flex-direction:column;
                background:var(--ink2);border:2px solid var(--hope);border-radius:14px;box-shadow:0 14px 40px rgba(0,0,0,.6);}
   .bubble-open header{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line);}
@@ -123,7 +123,7 @@
   .bubble-open .roller{padding:16px;border-bottom:1px solid var(--line);}
   @media (max-width:480px){
     .bubble{bottom:12px;left:12px;}
-    .bubble-closed{width:92px;height:92px;border-radius:14px;}
+    .bubble-closed{width:54px;height:54px;border-radius:50%;}
     .bubble-closed .num{font-size:2rem;}
     .bubble-open{width:calc(100vw - 24px);}
   }
@@ -405,6 +405,9 @@ const K = {
   rolls: c => `dh:rolls:${c}`,
   rewards:c=> `dh:rewards:${c}`,
   spotlight:c=> `dh:spotlight:${c}`,
+  roll:(c,r)=> `dh:roll:${c}:${String(r.ts).padStart(14,'0')}-${r.id}`,
+  rollPrefix:c=> `dh:roll:${c}:`,
+  medo:c=> `dh:medo:${c}`,
   sheet:(c,id)=> `dh:sheet:${c}:${id}`,
   sheetPrefix:c=> `dh:sheet:${c}:`,
   session:'dh:session'
@@ -695,6 +698,7 @@ function boxesRestantes(f, tier, opId){
 }
 function novaFicha(dono, classe){
   const c = classe ? CLASSES[classe] : null;
+  const armIdInicial = 'arm_'+uid();
   const lim = c ? c.armadura.limiares.split('/').map(s=>parseInt(s)) : [5,11];
   return {
     id: uid(), tipo:'pc', dono: dono||'', nome:'', genero:'',
@@ -707,8 +711,8 @@ function novaFicha(dono, classe){
     arma1: c? {...c.arma1} : {nome:'',atr:'',dano:'',hab:''},
     arma2: c? {...c.arma2} : {nome:'',atr:'',dano:'',hab:''},
     armaduraAtiva: c? {nome:c.armadura.nome,limiares:c.armadura.limiares,base:c.armadura.base,hab:c.armadura.hab} : {nome:'',limiares:'',base:'',hab:''},
-    armaduras: c? [{id:uid(),nome:c.armadura.nome,limiares:c.armadura.limiares,base:c.armadura.base,hab:c.armadura.hab}] : [],
-    armaduraAtivaId: null,
+    armaduras: c? [{id:armIdInicial,nome:c.armadura.nome,limiares:c.armadura.limiares,base:c.armadura.base,hab:c.armadura.hab}] : [],
+    armaduraAtivaId: c? armIdInicial : null, // a armadura inicial já vem equipada
     inventario: c? ['Tocha, 15m de corda, suprimentos básicos', c.itens] : [],
     habilidades: c? c.feature : '', habEsperanca: c? `${c.hopeName}: ${c.hope}` : '',
     mao: [], reserva: [], formaFeraAtiva: '', companheiro: null, cardImages: {},
@@ -738,7 +742,7 @@ function novoArquivoMundo(nome){ return { id:uid(), tipo:'arquivo', nome: nome||
 let campanhaSaveTimer = null;
 function agendarSalvarCampanha(){
   clearTimeout(campanhaSaveTimer);
-  campanhaSaveTimer = setTimeout(()=> salvarCampanha(), 400);
+  campanhaSaveTimer = setTimeout(()=>{ campanhaSaveTimer=null; salvarCampanha(); }, 400);
 }
 function lerImagemRedimensionada(file, maxW, qualidade, callback){
   const reader = new FileReader();
@@ -1013,6 +1017,7 @@ App.login = async ()=>{
   }
 };
 App.sair = async ()=>{
+  try{ localStorage.removeItem('dh:ultimaMesa'); }catch(e){}
   desligarEspiaCartas(); desligarEspiaFichas();
   if(authFB) await authFB.signOut();
   state.usuario=null; state.screen='login'; state.campanha=null;
@@ -1031,7 +1036,6 @@ App.criarCampanha = async ()=>{
   while(await DB.get(K.camp(cod))) cod = code6();
   const c = {codigo:cod, nome, mestre:state.usuario.nome, jogadores:[], criada:Date.now(), medo:0, contagens:[]};
   await DB.set(K.camp(cod), c);
-  await DB.set(K.rolls(cod), []);
   await DB.set(K.rewards(cod), []);
   const u = await DB.get(K.user(state.usuario.nome)) || state.usuario;
   const set = new Set(u.campanhas||[]); set.add(cod);
@@ -1055,6 +1059,7 @@ App.entrarCampanha = async ()=>{
   const u2 = {...u, campanhas:[...set]};
   await DB.set(K.user(state.usuario.nome), u2);
   state.usuario = u2; state.modal=null;
+  state.homeTab = (c.mestre===state.usuario.nome)? 'mestre' : 'jogador';
   await recarregarCampanhasHome();
   render();
 };
@@ -1072,6 +1077,8 @@ App.sairDaCampanha = async (cod)=>{
 App.deletarCampanha = async (cod, nome)=>{
   if(!confirm(`Deletar "${nome}"? Fichas e rolagens serão perdidas.`)) return;
   for(const d of await DB.list(K.sheetPrefix(cod))) await DB.del(d);
+  for(const d of await DB.list(K.rollPrefix(cod))) await DB.del(d);
+  await DB.del(K.medo(cod));
   await DB.del(K.camp(cod)); await DB.del(K.sheets(cod)); await DB.del(K.rolls(cod));
   await DB.del(K.rewards(cod)); await DB.del(K.cover(cod));
   const u = await DB.get(K.user(state.usuario.nome));
@@ -1093,16 +1100,20 @@ App.abrirMesa = async (cod)=>{
   state.campanha = c;
   state.capa = await DB.get(K.cover(cod));
   state.fichas = await carregarFichas(cod);
-  state.rolagens = (await DB.get(K.rolls(cod))) || [];
+  state.rolagens = await carregarRolagens(cod);
+  const md = await DB.get(K.medo(cod));
+  if(md && typeof md.valor==='number') c.medo = md.valor; else await DB.set(K.medo(cod), { valor: c.medo||0 });
   state.historico = (await DB.get(K.rewards(cod))) || [];
   state.tableTab = (c.mestre===state.usuario.nome) ? 'mestre' : 'personagens';
   state.abertaId = null; state.criando=null; state.recompSel=[];
   state.screen='table';
   ligarEspiaCartas(cod);
   ligarEspiaFichas(cod);
+  try{ localStorage.setItem('dh:ultimaMesa', JSON.stringify({u:state.usuario.nome, cod})); }catch(e){}
   render();
 };
 App.voltarHome = async ()=>{
+  try{ localStorage.removeItem('dh:ultimaMesa'); }catch(e){}
   desligarEspiaCartas(); desligarEspiaFichas();
   state.campanha=null; state.screen='home'; render();
   await recarregarCampanhasHome(); render();
@@ -1289,10 +1300,66 @@ async function carregarFichas(cod){
   }
   return fichas.map(garantirCamposFicha);
 }
+async function carregarRolagens(cod){
+  const docs = await DB.listValues(K.rollPrefix(cod));
+  const rolls = docs.map(d=>d.value).filter(v=>v && v.id && v.ts);
+  const antigo = await DB.get(K.rolls(cod));   // migração do formato antigo (lista única)
+  if(Array.isArray(antigo)){
+    const ids = new Set(rolls.map(r=>r.id));
+    for(const r of antigo){ if(r && r.id && r.ts && !ids.has(r.id)){ rolls.push(r); await DB.set(K.roll(cod,r), r); } }
+    await DB.del(K.rolls(cod));
+  }
+  rolls.sort((a,b)=>b.ts-a.ts);
+  rolls.slice(200).forEach(r=>{ DB.del(K.roll(cod,r)); });  // poda o histórico muito antigo
+  return rolls.slice(0,80);
+}
+let espiaExtrasUnsubs = [];
+function ligarEspiaExtras(cod){
+  desligarEspiaExtras();
+  if(!dbFB) return;
+  const col = dbFB.collection('appData');
+  const FP = firebase.firestore.FieldPath.documentId();
+  // rolagens dos outros jogadores aparecem ao vivo no histórico
+  const pr = K.rollPrefix(cod);
+  espiaExtrasUnsubs.push(col.where(FP,'>=',pr).where(FP,'<',pr+'\uf8ff').onSnapshot(snap=>{
+    if(!state.campanha || state.campanha.codigo!==cod) return;
+    let mudou=false;
+    snap.docChanges().forEach(ch=>{
+      if(ch.type==='removed') return;
+      const v=(ch.doc.data()||{}).value;
+      if(!v || !v.id || state.rolagens.some(x=>x.id===v.id)) return;
+      state.rolagens.push(v); mudou=true;
+    });
+    if(mudou){ state.rolagens.sort((a,b)=>b.ts-a.ts); state.rolagens=state.rolagens.slice(0,80); render(); }
+  }, ()=>{}));
+  // Pontos de Medo ao vivo
+  espiaExtrasUnsubs.push(col.doc(K.medo(cod)).onSnapshot(snap=>{
+    if(!state.campanha || state.campanha.codigo!==cod || !snap.exists) return;
+    const v=(snap.data()||{}).value;
+    if(v && typeof v.valor==='number' && v.valor!==state.campanha.medo){ state.campanha.medo=v.valor; render(); }
+  }, ()=>{}));
+  // dados da campanha (Mundo, contagens, jogadores) ao vivo para quem não é o mestre da edição
+  espiaExtrasUnsubs.push(col.doc(K.camp(cod)).onSnapshot(snap=>{
+    if(!state.campanha || state.campanha.codigo!==cod || !snap.exists) return;
+    const v=(snap.data()||{}).value; if(!v) return;
+    if(campanhaSaveTimer) return;                       // edição local pendente
+    const semMedo=o=>{ const c={...o}; delete c.medo; return JSON.stringify(c); };
+    if(semMedo(v)===semMedo(state.campanha)) return;    // eco da minha própria gravação
+    const medo=state.campanha.medo;
+    if(!v.mundo) v.mundo={nome:'O Novo Mundo',itens:[]};
+    if(!v.contagens) v.contagens=[]; if(!v.ambientes) v.ambientes=[];
+    state.campanha={...v, medo};
+    render();
+  }, ()=>{}));
+}
+function desligarEspiaExtras(){
+  espiaExtrasUnsubs.forEach(u=>{ try{u();}catch(e){} }); espiaExtrasUnsubs=[];
+}
 let espiaFichasUnsub = null;
 function ligarEspiaFichas(cod){
   desligarEspiaFichas();
   if(!dbFB) return;
+  ligarEspiaExtras(cod);
   const prefix = K.sheetPrefix(cod);
   espiaFichasUnsub = dbFB.collection('appData')
     .where(firebase.firestore.FieldPath.documentId(), '>=', prefix)
@@ -1317,6 +1384,7 @@ function ligarEspiaFichas(cod){
     }, ()=>{});
 }
 function desligarEspiaFichas(){
+  desligarEspiaExtras();
   if(espiaFichasUnsub){ try{ espiaFichasUnsub(); }catch(e){} espiaFichasUnsub=null; }
 }
 async function salvarUmaFicha(f, semRender){
@@ -1342,13 +1410,10 @@ function mostrarRollToast(r){
 async function registrarRolagem(r){
   r.autor = r.autor || state.usuario.nome;
   state.rolagens = [r, ...state.rolagens].slice(0,80);
-  if(r.tipo==='dualidade' && r.resultado==='medo' && state.campanha){
-    state.campanha.medo = Math.min(12, (state.campanha.medo||0) + 1);
-    salvarCampanha();
-  }
+  if(r.tipo==='dualidade' && r.resultado==='medo' && state.campanha) ganharMedo(1);
   mostrarRollToast(r);
   render();
-  await DB.set(K.rolls(state.campanha.codigo), state.rolagens);
+  await DB.set(K.roll(state.campanha.codigo, r), r);
 }
 
 App.rolarLivre = (prefix)=>{
@@ -1373,38 +1438,61 @@ App.copiarCodigo = ()=>{
 
 /* ---------- Pontos de Medo (recurso do mestre) ---------- */
 async function salvarCampanha(){
-  await DB.set(K.camp(state.campanha.codigo), state.campanha);
+  // Só o mestre edita a campanha. A lista de jogadores é alterada por quem entra/sai (direto no banco),
+  // então ela vem sempre do banco para não ser sobrescrita por uma cópia antiga.
+  const cod = state.campanha.codigo;
+  const remoto = await DB.get(K.camp(cod));
+  if(remoto && Array.isArray(remoto.jogadores)) state.campanha.jogadores = remoto.jogadores;
+  await DB.set(K.camp(cod), state.campanha);
+}
+/* Pontos de Medo ficam num documento próprio: qualquer jogador pode gerar Medo ao rolar,
+   e antes isso reescrevia a campanha inteira (apagando o trabalho do mestre). */
+async function salvarMedo(){
+  await DB.set(K.medo(state.campanha.codigo), { valor: state.campanha.medo||0 });
+}
+async function ganharMedo(n){
+  const c = state.campanha; if(!c) return;
+  const antes = c.medo||0;
+  c.medo = Math.min(12, antes+n);               // otimista
+  const cod = c.codigo;
+  try{
+    const remoto = await DB.get(K.medo(cod));
+    const base = (remoto && typeof remoto.valor==='number')? remoto.valor : antes;
+    const novo = Math.min(12, base+n);
+    await DB.set(K.medo(cod), { valor: novo });
+    if(state.campanha && state.campanha.codigo===cod && state.campanha.medo!==novo){ state.campanha.medo = novo; render(); }
+  }catch(e){ console.warn('Falha ao salvar Medo', e); }
 }
 App.medoAjustar = (delta)=>{
   const c = state.campanha;
   c.medo = Math.max(0, Math.min(12, (c.medo||0) + delta));
-  salvarCampanha();
+  salvarMedo();
   render();
 };
 App.medoDefinir = (valor)=>{
   const c = state.campanha;
   c.medo = Math.max(0, Math.min(12, valor));
-  salvarCampanha();
+  salvarMedo();
   render();
 };
 App.medoIniciar = ()=>{
   const c = state.campanha;
   const n = Math.max(1, (c.jogadores||[]).length || 1);
   c.medo = Math.min(12, n);
-  salvarCampanha();
+  salvarMedo();
   render();
 };
 App.medoRepousoCurto = ()=>{
   const c = state.campanha;
   c.medo = Math.min(12, (c.medo||0) + d(4));
-  salvarCampanha();
+  salvarMedo();
   render();
 };
 App.medoRepousoLongo = ()=>{
   const c = state.campanha;
   const n = Math.max(1, (c.jogadores||[]).length || 1);
   c.medo = Math.min(12, (c.medo||0) + n + d(4));
-  salvarCampanha();
+  salvarMedo();
   render();
 };
 
@@ -1824,6 +1912,9 @@ App.wizEquiparArmadura = (idx)=>{
   const [patamar, nome, limiares, base, habilidade] = item;
   const f = state.wizard.ficha;
   f.armaduraAtiva = { nome, limiares, base, hab: habilidade||'' };
+  f.armaduras = (f.armaduras||[]).filter(a=>a.id!==f.armaduraAtivaId);
+  const nova = { id:'arm_'+uid(), nome, limiares, base, hab: habilidade||'' };
+  f.armaduras.push(nova); f.armaduraAtivaId = nova.id;
   f.armaduraMax = Number(base)||0;
   const partes = String(limiares).split('/').map(s=>parseInt(s));
   if(partes.length===2 && !isNaN(partes[0]) && !isNaN(partes[1])){
@@ -1906,10 +1997,16 @@ function garantirCamposFicha(f){
   if(f.cicatrizes===undefined) f.cicatrizes = 0;
   if(f.status===undefined) f.status = 'vivo';
   if(!f.armaduras){
-    f.armaduras = (f.armaduraAtiva && f.armaduraAtiva.nome) ? [{id:uid(), ...f.armaduraAtiva}] : [];
+    f.armaduras = (f.armaduraAtiva && f.armaduraAtiva.nome) ? [{id:'arm_'+uid(), ...f.armaduraAtiva}] : [];
     f.armaduraAtivaId = f.armaduras[0]? f.armaduras[0].id : null;
   }
   if(f.armaduraAtivaId===undefined) f.armaduraAtivaId = null;
+  // a armadura ativa precisa estar na lista e marcada como equipada
+  if(f.armaduraAtiva && f.armaduraAtiva.nome && !f.armaduras.some(a=>a.id===f.armaduraAtivaId)){
+    const igual = f.armaduras.find(a=>a.nome===f.armaduraAtiva.nome);
+    if(igual) f.armaduraAtivaId = igual.id;
+    else { const nova={id:'arm_'+uid(), ...f.armaduraAtiva}; f.armaduras.push(nova); f.armaduraAtivaId=nova.id; }
+  }
   if(f.limiarMaiorBase===undefined || f.limiarGraveBase===undefined){
     const c = CLASSES[f.classe];
     let lim = [5,11];
@@ -2840,8 +2937,8 @@ function DiceRollerHTML(prefix){
 function Bubble(){
   if(!state.bubbleOpen){
     return `<div class="bubble">
-      <button class="bubble-closed" onclick="App.toggleBubble()">
-        <span class="num" style="font-size:1.8rem;">${icon('dado',38)}</span>
+      <button class="bubble-closed" title="Rolagens" onclick="App.toggleBubble()">
+        <span class="num" style="font-size:1.8rem;">${icon('dado',30)}</span>
         <span class="lab">rolagens</span>
       </button></div>`;
   }
@@ -4368,7 +4465,7 @@ function WizardHTML(){
     const categoriaKey = { fisicas:'armasPrimariasFisicas', magicas:'armasPrimariasMagicas', secundarias:'armasSecundarias', armaduras:'armaduras' }[equipAba];
     const equipItens = EQUIPAMENTO_LOJA[categoriaKey].map((it,i)=>({it,i})).filter(x=>x.it[0]===1);
     const ehArmaAba = equipAba!=='armaduras';
-    corpo = `<div class="panel"><div class="panel-head"><h3>Passo 5 — Escolha seu equipamento</h3></div><div class="panel-body">
+    corpo = `<div class="panel"><div class="panel-head"><h3>Passo 4 — Escolha seu equipamento</h3></div><div class="panel-body">
       ${ c? `<div class="stack" style="font-size:14px;">
         <div class="grid g3" style="margin-bottom:4px;">
           <div class="attrbox" style="text-align:left;padding:10px 12px;">
@@ -4430,7 +4527,7 @@ function WizardHTML(){
 
   } else if(w.passo===4){
     const perguntas = ORIGENS[f.classe] || [];
-    corpo = `<div class="panel"><div class="panel-head"><h3>Passo 6 — Crie sua origem</h3></div><div class="panel-body">
+    corpo = `<div class="panel"><div class="panel-head"><h3>Passo 5 — Crie sua origem</h3></div><div class="panel-body">
       ${perguntas.length? `
       <p class="muted" style="margin-top:0;font-size:13px;">Escolha uma pergunta de origem (ou crie a sua) e responda.</p>
       <div class="stack" style="margin-bottom:12px;">
@@ -4443,7 +4540,7 @@ function WizardHTML(){
     </div></div>`;
 
   } else if(w.passo===5){
-    corpo = `<div class="panel"><div class="panel-head"><h3>Passo 7 — Crie suas Experiências</h3></div><div class="panel-body">
+    corpo = `<div class="panel"><div class="panel-head"><h3>Passo 6 — Crie suas Experiências</h3></div><div class="panel-body">
       <p class="muted" style="margin-top:0;font-size:13px;">Experiências são frases curtas e específicas sobre o passado do personagem e começam com +2.</p>
       <div class="stack">
         ${[0,1].map(i=>`<div class="field"><label>Experiência ${i+1}</label><input value="${esc(f.experiencias[i]?.nome||'')}" oninput="App.wizExp(${i},this.value)"></div>`).join('')}
@@ -4451,7 +4548,7 @@ function WizardHTML(){
     </div></div>`;
 
   } else if(w.passo===6){
-    corpo = `<div class="panel"><div class="panel-head"><h3>Passo 8 — Escolha suas cartas</h3>
+    corpo = `<div class="panel"><div class="panel-head"><h3>Passo 7 — Escolha suas cartas</h3>
       <span class="muted" style="font-size:12px;">${w.cartasEscolhidas.length}/2 escolhidas</span></div>
       <div class="panel-body">
       <p class="muted" style="margin-top:0;font-size:13px;">Veja as cartas de 1º nível dos domínios da sua classe (${doms.join(' e ')}) e escolha duas — de um domínio só ou de cada.</p>
@@ -4473,7 +4570,7 @@ function WizardHTML(){
 
   } else if(w.passo===7){
     const vinc = VINCULOS[f.classe] || [];
-    corpo = `<div class="panel"><div class="panel-head"><h3>Passo 9 — Crie seus vínculos</h3></div><div class="panel-body">
+    corpo = `<div class="panel"><div class="panel-head"><h3>Passo 8 — Crie seus vínculos</h3></div><div class="panel-body">
       <p class="muted" style="margin-top:0;font-size:13px;">Vínculos são construídos com o resto do grupo à mesa. Use estas perguntas como inspiração para fazer aos outros jogadores, ou anote o que já foi combinado.</p>
       <ul style="margin:0 0 12px;padding-left:18px;font-size:13px;color:var(--muted);">
         ${vinc.map(v=>`<li style="margin-bottom:4px;">${esc(v)}</li>`).join('')}
@@ -4509,6 +4606,13 @@ function WizardHTML(){
       state.usuario = u || {nome:nomeExibicao, uid:user.uid, email:user.email, criado:Date.now(), campanhas:[]};
       if(state.screen==='login') state.screen='home';
       if(state.screen==='home') await recarregarCampanhasHome();
+      // depois de um refresh, volta direto para a mesa que estava aberta
+      if(state.screen==='home' && !state.campanha){
+        try{
+          const ult = JSON.parse(localStorage.getItem('dh:ultimaMesa')||'null');
+          if(ult && ult.u===state.usuario.nome && (state.usuario.campanhas||[]).includes(ult.cod)) await App.abrirMesa(ult.cod);
+        }catch(e){}
+      }
     } else {
       state.usuario = null;
       if(state.screen!=='config-firebase') state.screen = 'login';
