@@ -386,6 +386,14 @@ const DB = {
       .where(firebase.firestore.FieldPath.documentId(), '<', prefix + '\uf8ff')
       .get();
     return snap.docs.map(d => d.id);
+  },
+  async listValues(prefix){
+    if(!dbFB) return [];
+    const snap = await dbFB.collection('appData')
+      .where(firebase.firestore.FieldPath.documentId(), '>=', prefix)
+      .where(firebase.firestore.FieldPath.documentId(), '<', prefix + '\uf8ff')
+      .get();
+    return snap.docs.map(d => ({ id:d.id, value:(d.data()||{}).value }));
   }
 };
 
@@ -397,6 +405,8 @@ const K = {
   rolls: c => `dh:rolls:${c}`,
   rewards:c=> `dh:rewards:${c}`,
   spotlight:c=> `dh:spotlight:${c}`,
+  sheet:(c,id)=> `dh:sheet:${c}:${id}`,
+  sheetPrefix:c=> `dh:sheet:${c}:`,
   session:'dh:session'
 };
 
@@ -775,8 +785,8 @@ const TESOURO_TABELA = [[1, "Saco de Dormir de Qualidade", "Durante o repouso, v
 const CONSUMIVEIS_TABELA = [[1, "Poção da Velocidade", "Você recebe um bônus de +1 em seu próximo teste de Agilidade."], [2, "Poção do Impulso", "Você recebe um bônus de +1 em seu próximo teste de Força."], [3, "Poção do Controle", "Você recebe um bônus de +1 em seu próximo teste de Acuidade."], [4, "Poção da Sintonia", "Você recebe um bônus de +1 em seu próximo teste de Instinto."], [5, "Poção do Charme", "Você recebe um bônus de +1 em seu próximo teste de Presença."], [6, "Poção da Iluminação", "Você recebe um bônus de +1 em seu próximo teste de Conhecimento."], [7, "Poção de Vida Menor", "Recupere 1d4 Pontos de Vida."], [8, "Poção de Vigor Menor", "Recupere 1d4 Pontos de Fadiga."], [9, "Veneno de Presâmia", "Você pode aplicar este veneno a uma arma que causa dano físico para somar 1d6 em sua próxima rolagem de dano com ela."], [10, "Folhas de Varik", "Você pode comer as folhas para receber 2 Pontos de Esperança."], [11, "Frasco de Gota Lunar", "Quando beber o conteúdo deste frasco, você consegue enxergar na escuridão até seu próximo descanso."], [12, "Fragmento Arcano Instável", "Você pode fazer um teste de Acuidade para lançar este fragmento em um grupo Distante de adversários. Alvos atingidos sofrem 1d20 de dano mágico."], [13, "Poção da Estabilidade", "Você pode beber desta poção para fazer uma ação de repouso adicional."], [14, "Veneno de Presâmia Aprimorado", "Você pode aplicar este veneno a uma arma que causa dano físico para somar 1d8 em sua próxima rolagem de dano com ela."], [15, "Pó do Estalo", "Marque 1 Ponto de Fadiga para recuperar 1 Ponto de Vida."], [16, "Frasco de Fumaça Negra", "Ao ser alvo de um ataque, use este frasco e role um número de d6 igual à sua Agilidade. Some o valor mais alto à sua Evasão contra este ataque."], [17, "Raiz da Cambalhota", "Coma esta raiz para saltar para um ponto em alcance Distante uma vez sem precisar fazer teste."], [18, "Molde de Argila", "Gaste 1 Ponto de Esperança para usar esta argila, alterando seu rosto para ficar irreconhecível até seu próximo descanso."], [19, "Poção de Vida", "Recupere 1d4+1 PV."], [20, "Poção de Vigor", "Recupere 1d4+1 Pontos de Fadiga."], [21, "Remendo de Armadura", "Ao usar este item, gaste qualquer número de Pontos de Esperança e recupere o mesmo número de PA."], [22, "Unguento de Guelras", "Você pode aplicar este unguento em seu pescoço para respirar sob a água por um número de minutos igual ao seu nível."], [23, "Pergaminho da Cópia", "Ao tocar outro pergaminho com este, você copia perfeitamente os conteúdos do segundo pergaminho. Após ser usado, este pergaminho se torna um pedaço de papel mundano."], [24, "Fragmento Arcano Aprimorado", "Você pode fazer um teste de Acuidade para lançar este fragmento em um grupo Distante de adversários. Alvos atingidos sofrem 2d20 de dano mágico."], [25, "Poção da Velocidade Maior", "Você recebe um bônus de +1 em Agilidade até seu próximo descanso."], [26, "Poção do Impulso Maior", "Você recebe um bônus de +1 em Força até seu próximo descanso."], [27, "Poção do Controle Maior", "Você recebe um bônus de +1 em Acuidade até seu próximo descanso."], [28, "Poção da Sintonia Maior", "Você recebe um bônus de +1 em Instinto até seu próximo descanso."], [29, "Poção do Charme Maior", "Você recebe um bônus de +1 em Presença até seu próximo descanso."], [30, "Poção da Iluminação Maior", "Você recebe um bônus de +1 em Conhecimento até seu próximo descanso."], [31, "Sangue dos Yorgi", "Você pode beber esse sangue para desaparecer do local em que está e imediatamente aparecer em um ponto em alcance Muito Distante que você consiga ver."], [32, "Poção Secreta de Homet", "Após beber esta poção, seu próximo sucesso em um teste de ataque deve ser considerado um sucesso crítico."], [33, "Saliva de Espinho-vermelho", "Você pode aplicar esta saliva a uma arma que cause dano físico para acrescentar 1d12 à sua próxima rolagem de dano feita com ela."], [34, "Pedra Canalizadora", "Você pode usar esta pedra para pegar uma magia ou grimório da sua reserva, usá-lo uma vez e então devolvê-lo à reserva."], [35, "Pó Mítico", "Você pode aplicar este pó em uma arma que causa dano mágico para acrescentar 1d12 à sua próxima rolagem de dano feita com ela."], [36, "Pasta Ácida", "Esta pasta corrói paredes e outras superfícies em meio a clarões de luz."]];
 const ANCESTRALIDADES_INFO = {"Aetheris": {"habilidades": [["Aura Consagrada", "Uma vez por descanso longo, quando um aliado em alcance Próximo rolar com Medo, você pode transformá-la em uma rolagem com Esperança."], ["Asas Celestiais", "Você tem asas que permitem voar. Uma vez por cena, enquanto voa, você pode gastar 1 Esperança em vez de marcar 1 Ponto de Armadura."]]}, "Anão": {"habilidades": [["Pele Espessa", "Quando sofre dano leve, marque 2 Pontos de Fadiga em vez de marcar 1 Ponto de Vida."], ["Vigoroso", "Gaste 3 Pontos de Esperança para reduzir à metade o dano físico sofrido."]]}, "Clank": {"habilidades": [["Projeto Intencional", "Durante a criação de personagem, escolha uma de suas Experiências mais alinhada ao seu propósito e receba +1 permanente nela."], ["Eficiente", "Ao fazer um descanso curto, você pode escolher um movimento de descanso longo em vez de um de descanso curto."]]}, "Drakona": {"habilidades": [["Escamas", "Quando sofrer dano grave, marque 1 Ponto de Fadiga para marcar 1 Ponto de Vida a menos."], ["Sopro Elemental", "Escolha um elemento (eletricidade, fogo, gelo etc.). Use-o contra um alvo ou grupo Muito Próximo como arma de Instinto que causa d8 de dano mágico com sua Proficiência."]]}, "Drow": {"habilidades": [["Fundir-se às Sombras", "Você tem vantagem em testes de ação feitos para se esconder ou se mover furtivamente."], ["Ciclo da Dor", "Sempre que você rolar uma falha com Medo, recupere 1 Ponto de Fadiga."]]}, "Earthkin": {"habilidades": [["Pele de Pedra", "Receba um bônus permanente de +1 na Armadura e nos limiares de dano na criação de personagem."], ["Imóvel", "Enquanto estiver tocando o chão, você não pode ser erguido nem movido contra sua vontade."]]}, "Elfo": {"habilidades": [["Reação Rápida", "Marque 1 Ponto de Fadiga para receber vantagem em um teste de reação."], ["Transe Celestial", "Durante um descanso, entre em transe celestial para escolher um movimento de repouso adicional."]]}, "Emberkin": {"habilidades": [["À Prova de Fogo", "Você é imune a dano de chamas mágicas ou mundanas."], ["Ignição", "Marque 1 Ponto de Fadiga para envolver sua arma principal em chamas até o fim da cena. Enquanto a arma estiver em chamas, ela emite luz intensa e você recebe um bônus de 1d6 nas rolagens de dano com ela."]]}, "Fada": {"habilidades": [["Testar a Sorte", "Uma vez por sessão, após você ou um aliado voluntário Próximo fazer um teste, gaste 3 Pontos de Esperança para rolar novamente os Dados de Dualidade."], ["Asas", "Você pode voar. Enquanto voando, após um adversário atacar você, marque 1 Ponto de Fadiga para receber +2 na Evasão contra esse ataque."]]}, "Fauno": {"habilidades": [["Salto Caprino", "Salte para qualquer ponto no alcance Próximo como parte do seu movimento normal, transpondo obstáculos ou fendas com facilidade."], ["Coice", "Ao acertar um ataque CaC, marque 1 Ponto de Fadiga para dar um coice, causando 2d6 de dano adicional e empurrando o adversário (ou você mesmo) a Muito Próximo."]]}, "Firbolg": {"habilidades": [["Investida", "Ao ter sucesso em um teste de Agilidade para se mover de Distante/Muito Distante até CaC de um ou mais alvos, marque 1 Ponto de Fadiga para causar 1d12 de dano físico a todos eles."], ["Inabalável", "Ao marcar 1 Ponto de Fadiga, role 1d6; em um 6, não o marque."]]}, "Fungril": {"habilidades": [["Conexão Fungril", "Teste de Instinto (12) para se comunicar com outros fungris pela rede micelial; em sucesso, a qualquer distância."], ["Vínculo Mortal", "Tocando um cadáver recém-morto, marque 1 Ponto de Fadiga para extrair uma memória relacionada a uma emoção ou sensação à sua escolha."]]}, "Galapa": {"habilidades": [["Carapaça", "Bônus nos limiares de dano igual à sua Proficiência."], ["Retração", "Marque 1 Ponto de Fadiga para entrar na carapaça: resistência a dano físico, desvantagem em testes e não pode se mover."]]}, "Gigante": {"habilidades": [["Resistência", "Receba 1 Ponto de Vida adicional durante a criação de personagem."], ["Alcance", "Trate qualquer arma, talento, magia ou habilidade com alcance Corpo a Corpo como se tivesse alcance Muito Próximo."]]}, "Gnomo": {"habilidades": [["Dedos Ágeis", "Ao fazer um teste de Acuidade, você pode gastar 2 Pontos de Esperança para rolar de novo seu Dado de Esperança."], ["Passo Cintilante", "Uma vez por cena, você pode se teleportar para outro ponto que consiga ver em alcance Distante."]]}, "Goblin": {"habilidades": [["Passo Firme", "Você ignora desvantagem em testes de Agilidade."], ["Cheiro de Perigo", "Uma vez por descanso, marque 1 Ponto de Fadiga para forçar um adversário a refazer um teste de ataque contra você ou um aliado Muito Próximo."]]}, "Humano": {"habilidades": [["Resiliência", "Receba 1 Ponto de Fadiga adicional durante a criação de personagem."], ["Adaptabilidade", "Ao rolar uma falha em um teste que usou uma Experiência sua, marque 1 Ponto de Fadiga para rolar de novo."]]}, "Infernis": {"habilidades": [["Destemido", "Ao rolar com Medo, marque 2 Pontos de Fadiga para rolar com Esperança em vez disso."], ["Aspecto Apavorante", "Vantagem em testes para intimidar criaturas hostis."]]}, "Katari": {"habilidades": [["Instinto Felino", "Ao fazer um teste de Agilidade, gaste 2 Pontos de Esperança para rolar de novo seu Dado de Esperança."], ["Garras Retráteis", "Teste de Agilidade para arranhar um alvo CaC; em sucesso, fica temporariamente Vulnerável."]]}, "Orc": {"habilidades": [["Robusto", "Com apenas 1 Ponto de Vida restante, ataques contra você têm desvantagem."], ["Presas", "Ao acertar um ataque CaC, gaste 1 Ponto de Esperança para causar 1d6 de dano adicional com uma mordida."]]}, "Pequenino": {"habilidades": [["Talismã da Sorte", "No início de cada sessão, todos os membros do grupo recebem 1 Ponto de Esperança."], ["Senso de Direção", "Ao rolar 1 no Dado de Esperança, você pode rolá-lo novamente."]]}, "Quacho": {"habilidades": [["Anfíbio", "Você pode respirar e se movimentar naturalmente debaixo d'água."], ["Linguarudo", "Marque 1 Ponto de Fadiga para usar sua língua como arma de Acuidade com alcance Próximo, causando d12 de dano físico com sua Proficiência."]]}, "Símio": {"habilidades": [["Escalador Natural", "Vantagem em testes de Agilidade para se equilibrar e escalar."], ["Ágil", "Receba um bônus permanente de +1 na Evasão durante a criação de personagem."]]}, "Skykin": {"habilidades": [["Rajada", "Marque 1 Ponto de Fadiga para conjurar uma rajada de vento que carrega você ou um aliado Muito Próximo por até alcance Muito Distante. Além disso, você sempre controla a velocidade com que cai."], ["Olho da Tempestade", "Gaste 2 Pontos de Esperança para conceder a você ou a um aliado em alcance Corpo a Corpo +1 de Evasão até sofrer dano grave ou usar esta habilidade novamente."]]}, "Tidekin": {"habilidades": [["Anfíbio", "Você pode respirar e se movimentar naturalmente debaixo d'água."], ["Fonte de Vida", "Uma vez por descanso, quando tiver acesso a um pouco de água, você pode marcar 1 Ponto de Fadiga para recuperar 1 Ponto de Vida seu ou de um aliado em alcance Muito Próximo."]]}};
 const COMUNIDADES_INFO = {"Aristocrática": {"habilidade": ["Privilégio", "Vantagem em testes para se relacionar com nobres, negociar preços ou se aproveitar de sua reputação para conseguir o que quer."]}, "Belicosa": {"habilidade": ["Cara Firme", "Uma vez por sessão, quando fosse forçado a marcar 1 Ponto de Fadiga, você pode gastar 1 Ponto de Esperança em vez disso."]}, "Campesina": {"habilidade": ["Laços Estreitos", "Uma vez por descanso longo, você pode gastar qualquer quantidade de Esperança para conceder a um aliado em alcance Distante a mesma quantidade de Esperança."]}, "Desértica": {"habilidade": ["Oásis", "Durante um descanso curto, você ou um aliado pode rolar de novo um dado usado em um movimento de repouso e ficar com o maior resultado."]}, "Disciplinada": {"habilidade": ["Princípios", "Anote três ditados ou valores com os quais cresceu. Uma vez por descanso, ao descrever como incorpora um deles no movimento atual, role 1d20 como seu Dado de Esperança."]}, "Erudita": {"habilidade": ["Culto", "Vantagem em testes que envolvem cultura, história ou política de um lugar ou pessoa importante."]}, "Fora da lei": {"habilidade": ["Malandro", "Vantagem em testes para negociar com criminosos, perceber mentiras ou encontrar um esconderijo seguro."]}, "Gélida": {"habilidade": ["Rijo", "Ao fazer um descanso, você recupera 1 Ponto de Vida."]}, "Libertada": {"habilidade": ["Livre das Correntes", "Uma vez por sessão, quando rolar com Medo, você pode transformá-la em uma rolagem com Esperança."]}, "Marítima": {"habilidade": ["Conhecer a Maré", "Ao rolar com Medo, coloque 1 marcador na carta (máx. = seu nível). Antes de um teste, gaste marcadores para +1 por marcador. Perdidos no fim da sessão."]}, "Montanhesa": {"habilidade": ["Firme", "Vantagem em testes para cruzar abismos e saliências, orientar-se em ambientes inóspitos e usar conhecimentos de sobrevivência."]}, "Nômade": {"habilidade": ["Mochila de Nômade", "Adicione uma mochila ao seu inventário. Uma vez por sessão, gaste 1 Ponto de Esperança para tirar dela um item mundano útil à situação (definido com o mestre)."]}, "Renascida": {"habilidade": ["Família Escolhida", "Uma vez por descanso, você pode gastar 1 Ponto de Esperança para usar a Experiência de um aliado como se fosse sua. Ao fazer isso, descreva como seu tempo com esse aliado o preparou para este momento. Ao entrar em uma nova comunidade ou redescobrir a sua antiga, você pode trocar permanentemente esta carta pela dela."]}, "Silvestre": {"habilidade": ["Pés Leves", "Seu movimento é naturalmente silencioso; vantagem em testes para se mover sem ser ouvido."]}, "Subterrânea": {"habilidade": ["Habituado à Penumbra", "Vantagem em testes para se esconder, investigar ou perceber detalhes em áreas de penumbra ou sombra forte."]}};
-const ORIGENS = {"Bardo": ["Quem em sua comunidade lhe ensinou a ter tanta confiança em si mesmo?", "Você já se apaixonou. Quem você amava e como essa pessoa partiu seu coração?", "Você sempre teve admiração por outro bardo. Quem é essa pessoa e por que você a idolatra?"], "Druida": ["Por que a comunidade na qual você cresceu confiava tanto na natureza e suas criaturas?", "Qual foi o primeiro animal com o qual você teve uma conexão emocional? Por que essa conexão acabou?", "Quem está caçando você? O que essa pessoa quer de você?"], "Feiticeiro": ["O que fez com que as pessoas da sua comunidade desconfiassem de você?", "Quem lhe ensinou a domar sua magia descontrolada e por que essa pessoa não pode mais orientar você?", "Você teme algo profundamente e esconde isso de todos. O que é, e por que isso o aterroriza?"], "Guardião": ["Quem da sua comunidade você não conseguiu proteger e por que você ainda pensa nessa pessoa?", "Você recebeu a missão de proteger e levar algo importante a um lugar perigoso. O que é e aonde você precisa ir?", "Você acredita ter uma fraqueza. O que é, e como isso afeta você?"], "Guerreiro": ["Quem ensinou você a lutar e por que essa pessoa ficou para trás quando você saiu de sua comunidade?", "Anos atrás, você perdeu uma batalha para alguém que o deixou à beira da morte. Quem é essa pessoa e como ela traiu você?", "Que lugar lendário você sempre quis visitar e por que ele é tão especial?"], "Ladino": ["O que sua comunidade descobriu você fazendo que fez com que fosse expulso?", "Você tinha uma vida diferente, mas tentou abandoná-la. Que figura do passado ainda o persegue?", "Você ficou mais triste ao se despedir de quem?"], "Mago": ["Para quais responsabilidades sua comunidade já contou com você? Como você a decepcionou?", "Você passou a vida em busca de um livro ou objeto importante. O que é, e por que é tão importante?", "Você tem um rival poderoso. Quem é essa pessoa e por que você quer tanto derrotá-la?"], "Patrulheiro": ["Uma criatura terrível prejudicou sua comunidade e você jurou abatê-la. Que criatura é essa e qual é a trilha ou sinal específico que ela deixa para trás?", "A primeira presa que você abateu quase o matou. Que criatura foi essa, e, desde então, que parte de você nunca mais foi a mesma?", "Você já visitou muitos lugares perigosos, mas qual é o lugar aonde você jamais iria?"], "Serafim": ["Que deus(a) você segue? Que façanha incrível essa divindade realizou em seu momento de desespero?", "O que mudou em sua aparência após seu juramento?", "De que forma estranha ou exclusiva você se comunica com a divindade que segue?"]};
-const VINCULOS = {"Bardo": ["Como percebeu que seríamos grandes amigos?", "O que eu faço que irrita você?", "Por que você segura minha mão à noite?"], "Druida": ["O que você confiou a mim que sempre faz com que eu me arrisque por você?", "De que animal você me faz lembrar?", "Qual o apelido carinhoso que você me deu?"], "Feiticeiro": ["Por que você confia tanto em mim?", "O que eu fiz para você suspeitar tanto de mim?", "Por que mantemos em segredo o passado que compartilhamos?"], "Guardião": ["Como salvei sua vida quando nos conhecemos?", "Que lembrança você me deu e percebeu que eu sempre carrego comigo?", "Que mentira você me contou sobre você na qual eu caí completamente?"], "Guerreiro": ["Nos conhecíamos bem antes do surgimento do grupo. Como?", "Com qual tarefa mundana você costuma me ajudar, fora dos momentos de batalha?", "Que medos estou ajudando você a superar?"], "Ladino": ["O que eu convenci você a fazer recentemente que nos deixou em apuros?", "O que eu descobri sobre o seu passado e escondo dos outros?", "Quem você conhece do meu passado e como essa pessoa influenciou o que você sente sobre mim?"], "Mago": ["Que favor eu pedi e você não sabe se conseguirá cumprir?", "Que passatempo ou fascinação estranha nós compartilhamos?", "Que segredo a seu respeito você confiou a mim?"], "Patrulheiro": ["Qual é a rivalidade amigável que temos?", "Por que você age de forma tão diferente quando estamos sozinhos e quando há outras pessoas junto?", "Você me pediu para tomar cuidado com qual ameaça, e por que se preocupa com isso?"], "Serafim": ["O que você me fez prometer caso morra em batalha?", "Por que pergunta tantas coisas sobre minha divindade?", "Você me pediu para proteger um membro do grupo acima de todos, inclusive de você. Quem e por quê?"]};
+const ORIGENS = {"Bardo": ["Quem em sua comunidade lhe ensinou a ter tanta confiança em si mesmo?", "Você já se apaixonou. Quem você amava e como essa pessoa partiu seu coração?", "Você sempre teve admiração por outro bardo. Quem é essa pessoa e por que você a idolatra?"], "Druida": ["Por que a comunidade na qual você cresceu confiava tanto na natureza e suas criaturas?", "Qual foi o primeiro animal com o qual você teve uma conexão emocional? Por que essa conexão acabou?", "Quem está caçando você? O que essa pessoa quer de você?"], "Feiticeiro": ["O que fez com que as pessoas da sua comunidade desconfiassem de você?", "Quem lhe ensinou a domar sua magia descontrolada e por que essa pessoa não pode mais orientar você?", "Você teme algo profundamente e esconde isso de todos. O que é, e por que isso o aterroriza?"], "Guardião": ["Quem da sua comunidade você não conseguiu proteger e por que você ainda pensa nessa pessoa?", "Você recebeu a missão de proteger e levar algo importante a um lugar perigoso. O que é e aonde você precisa ir?", "Você acredita ter uma fraqueza. O que é, e como isso afeta você?"], "Guerreiro": ["Quem ensinou você a lutar e por que essa pessoa ficou para trás quando você saiu de sua comunidade?", "Anos atrás, você perdeu uma batalha para alguém que o deixou à beira da morte. Quem é essa pessoa e como ela traiu você?", "Que lugar lendário você sempre quis visitar e por que ele é tão especial?"], "Ladino": ["O que sua comunidade descobriu você fazendo que fez com que fosse expulso?", "Você tinha uma vida diferente, mas tentou abandoná-la. Que figura do passado ainda o persegue?", "Você ficou mais triste ao se despedir de quem?"], "Mago": ["Para quais responsabilidades sua comunidade já contou com você? Como você a decepcionou?", "Você passou a vida em busca de um livro ou objeto importante. O que é, e por que é tão importante?", "Você tem um rival poderoso. Quem é essa pessoa e por que você quer tanto derrotá-la?"], "Patrulheiro": ["Uma criatura terrível prejudicou sua comunidade e você jurou abatê-la. Que criatura é essa e qual é a trilha ou sinal específico que ela deixa para trás?", "A primeira presa que você abateu quase o matou. Que criatura foi essa, e, desde então, que parte de você nunca mais foi a mesma?", "Você já visitou muitos lugares perigosos, mas qual é o lugar aonde você jamais iria?"], "Serafim": ["Que deus(a) você segue? Que façanha incrível essa divindade realizou em seu momento de desespero?", "O que mudou em sua aparência após seu juramento?", "De que forma estranha ou exclusiva você se comunica com a divindade que segue?"], "Assassino": ["Você já matou alguém de quem era próximo. O que aconteceu e como isso mudou você?", "Que organização treinou você na arte de matar, e como você se tornou membro?", "Ao longo da sua carreira, um alvo escapou de você. Quem é essa pessoa e como ela escorregou entre seus dedos?"], "Lutador": ["Onde você passou parte da sua formação, aprendendo direta ou indiretamente a lutar no estilo que usa?", "Que organização jurou matar você assim que o vir, e o que você fez para despertar a ira dela?", "Para quem você perdeu uma luta recentemente e deseja desesperadamente uma revanche?"], "Bruxo": ["Quem da sua comunidade rejeitou você depois que fez um pacto com seu patrono?", "Que situação desesperadora levou você a empenhar sua vida a seu patrono?", "Seu patrono deu a você uma tarefa que deve cumprir acima de tudo. Qual é, e por que ela preocupa você?"], "Bruxa": ["Quem da sua comunidade temeu sua arte mágica? Que boato espalharam sobre você, e que verdade ele continha?", "Você já usou seu poder para ajudar alguém em uma situação desesperadora. Quem era essa pessoa, e por que ela procurou você?", "Sua magia certa vez abriu uma porta que era melhor deixar fechada. Quem ou o que estava do outro lado?"]};
+const VINCULOS = {"Bardo": ["Como percebeu que seríamos grandes amigos?", "O que eu faço que irrita você?", "Por que você segura minha mão à noite?"], "Druida": ["O que você confiou a mim que sempre faz com que eu me arrisque por você?", "De que animal você me faz lembrar?", "Qual o apelido carinhoso que você me deu?"], "Feiticeiro": ["Por que você confia tanto em mim?", "O que eu fiz para você suspeitar tanto de mim?", "Por que mantemos em segredo o passado que compartilhamos?"], "Guardião": ["Como salvei sua vida quando nos conhecemos?", "Que lembrança você me deu e percebeu que eu sempre carrego comigo?", "Que mentira você me contou sobre você na qual eu caí completamente?"], "Guerreiro": ["Nos conhecíamos bem antes do surgimento do grupo. Como?", "Com qual tarefa mundana você costuma me ajudar, fora dos momentos de batalha?", "Que medos estou ajudando você a superar?"], "Ladino": ["O que eu convenci você a fazer recentemente que nos deixou em apuros?", "O que eu descobri sobre o seu passado e escondo dos outros?", "Quem você conhece do meu passado e como essa pessoa influenciou o que você sente sobre mim?"], "Mago": ["Que favor eu pedi e você não sabe se conseguirá cumprir?", "Que passatempo ou fascinação estranha nós compartilhamos?", "Que segredo a seu respeito você confiou a mim?"], "Patrulheiro": ["Qual é a rivalidade amigável que temos?", "Por que você age de forma tão diferente quando estamos sozinhos e quando há outras pessoas junto?", "Você me pediu para tomar cuidado com qual ameaça, e por que se preocupa com isso?"], "Serafim": ["O que você me fez prometer caso morra em batalha?", "Por que pergunta tantas coisas sobre minha divindade?", "Você me pediu para proteger um membro do grupo acima de todos, inclusive de você. Quem e por quê?"], "Assassino": ["Eu matei alguém por você. Quem era essa pessoa?", "Como você me salvou quando eu estava à beira da morte? O que prometi a você como pagamento?", "Que segredo sobre mim eu contei a você, e como isso mudou a forma como você me enxerga?"], "Lutador": ["Qual é uma coisa da qual nós dois temos medo?", "Em que eu dependo de você durante nossas viagens? Como você se sente a respeito?", "Eu ainda não perdoei você por algo que me disse. O que foi, e por que você disse?"], "Bruxo": ["Por que você acha que eu confio em você sobre o que meu patrono diz e faz?", "Nossa relação mudou depois que você me viu prestar tributo ao meu patrono. O que você viu, e como isso afetou você?", "Eu já fiz algo muito tolo, e você nunca me deixou esquecer. O que foi?"], "Bruxa": ["Que ritual ou prática única eu ensinei a você e que agora fazemos juntos?", "Eu apareci para você em um sonho e compartilhei uma visão do futuro. O que eu disse?", "Sobre o que você costuma procurar meu conselho?"]};
 const GUIAS_PERSONAGEM = {"Bardo": {"descricao": "Como bardo, você sabe como fazer as pessoas falarem, chamar a atenção para si mesmo e usar palavras ou música para influenciar o mundo ao seu redor.", "roupas": "extravagantes, chiques, barulhentas, grandes, irregulares, elegantes, selvagens", "posturaDe": "barista, mágico, mestre de cerimônias, estrela do rock, espadachim"}, "Druida": {"descricao": "Como druida, você é uma força primal, preservando o equilíbrio entre a vida e a morte ao canalizar a própria natureza através de ti.", "roupas": "camufladas, longas, soltas, costuradas a esmo, majestosas, de retalhos", "posturaDe": "fogos de artifício, raposa, guia, hippie, bruxa"}, "Feiticeiro": {"descricao": "Como feiticeiro, você nasceu com poderes mágicos inatos e aprendeu a usar esse poder para conseguir o que deseja.", "roupas": "leves, extravagantes, discretas, em camadas, ornamentadas, apertadas", "posturaDe": "celebridade, comandante, político, brincalhão, lobo em pele de cordeiro"}, "Guardião": {"descricao": "Como guardião, você corre perigo para proteger seu grupo, vigiando quem não pode sobreviver sem você por perto.", "roupas": "casuais, intricadas, soltas, acolchoadas, reais, táticas, desgastadas", "posturaDe": "capitão, protetor, elefante, general, lutador"}, "Guerreiro": {"descricao": "Como guerreiro, você corre para a batalha sem hesitação ou cautela, sabendo que pode derrubar qualquer inimigo que estiver em seu caminho.", "roupas": "ousadas, remendadas, reforçadas, reais, elegantes, econômicas, desgastadas", "posturaDe": "touro, soldado dedicado, gladiador, herói, mercenário contratado"}, "Ladino": {"descricao": "Como ladino, você tem experiência em lutar tanto com sua lâmina quanto com sua inteligência, preferindo se mover rápido e lutar em silêncio.", "roupas": "limpas, escuras, discretas, de couro, táticas, apertadas", "posturaDe": "bandido, vigarista, apostador, chefe de máfia, pirata"}, "Mago": {"descricao": "Como mago, você se familiarizou com o arcano através do estudo incansável de grimórios e outras ferramentas mágicas.", "roupas": "bonitas, limpas, comuns, leves, em camadas, de retalhos, apertadas", "posturaDe": "excentricidade, bibliotecário, pavio curto, filósofo, professor"}, "Patrulheiro": {"descricao": "Como caçador, seu olhar aguçado e sua graciosa rapidez o tornam indispensável ao rastrear inimigos e viajar pelas áreas selvagens.", "roupas": "fluídas, suaves, naturais, manchadas, táticas, apertadas, de panos finos", "posturaDe": "criança, fantasma, sobrevivente, professor, cão de guarda"}, "Serafim": {"descricao": "Como serafim, você fez um voto a uma divindade que o ajuda a canalizar poder mágico sagrado para manter seu grupo vivo.", "roupas": "brilhantes, onduladas, ornamentadas, apertadas, modestas, naturais", "posturaDe": "anjo, médico, evangelista, monge, padre"}, "Assassino": {"descricao": "Como assassino, você é mestre em infligir ferimentos mortais com golpes precisos. Para você, a morte é um ofício — talvez sagrado — e você escolhe com cuidado (ou por um bom preço) quem merece o fim.", "roupas": "escuras, discretas, justas, com bolsos escondidos, capuz", "posturaDe": "carrasco, envenenador, espião, mercenário, executor de guilda"}, "Lutador": {"descricao": "Como lutador, você transforma o próprio corpo em arma. Seja por treino formal, um mentor ou uma briga de cada vez, você une corpo e mente para vencer com punhos nus o que outros enfrentam com espadas.", "roupas": "práticas, soltas, faixas nas mãos, cicatrizes à mostra, leves", "posturaDe": "lutador de arena, monge andarilho, valentão de taverna, atleta, mestre de artes marciais"}, "Bruxo": {"descricao": "Como bruxo, você trocou algo precioso — talvez a própria alma — com um patrono de outro mundo em troca de poder. Sua força depende da relação que mantém com essa entidade.", "roupas": "sombrias, com símbolos do patrono, ornadas, desgastadas, de cores profundas", "posturaDe": "penitente, devoto, vingador, barganhista, herdeiro de um pacto"}, "Bruxa": {"descricao": "Como bruxa, você convoca poder pela prática: feitiços, sussurros, talismãs e ilusões, sempre ligada a ancestrais, divindades ou forças da natureza. Muitos a temem, mas você caminha entre luz e sombra sem medo.", "roupas": "rústicas, cheias de bolsos e amuletos, com ervas, folhas ou luar nos detalhes", "posturaDe": "curandeira, líder de coven, oráculo, eremita, guardiã de segredos"}};
 const DESCRICAO_COMPARTILHADA = {"olhosComo": "cravos, terra, oceano sem fim, fogo, hera, lilás, noite, espuma do mar, inverno", "corpo": "largo, esculpido, curvilíneo, esguio, rotundo, baixo, atarracado, alto, magro, pequeno, definido", "peleNaCorDe": "cinzas, trevo, neve, areia fina, obsidiana, rosas, safira, glicínia"};
 const PATAMARES_TEXTO = [{"titulo": "2º Patamar (níveis 2 a 4)", "texto": "No nível 2, crie uma nova Experiência com +2 e aumente sua Proficiência em +1. Escolha duas opções: marcar dois atributos desmarcados (+1 cada); +1 PV permanente; +1 PF permanente; +1 permanente em duas Experiências; uma nova carta de domínio (nível máx. 4); +1 permanente na Evasão. Atualize nível e limiares de dano."}, {"titulo": "3º Patamar (níveis 5 a 7)", "texto": "No nível 5, crie uma nova Experiência com +2 e remova todas as marcações nos atributos; aumente sua Proficiência em +1. Escolha duas opções (das anteriores ou): nova carta de domínio (nível máx. 7); pegar a carta de subclasse aprimorada (corta a opção de multiclasse); ou multiclasse (escolhe uma classe adicional, corta a subclasse aprimorada). Atualize nível e limiares de dano."}, {"titulo": "4º Patamar (níveis 8 a 10)", "texto": "No nível 8, crie uma nova Experiência com +2 e remova todas as marcações nos atributos; aumente sua Proficiência em +1. Escolha duas opções (das anteriores, sem limite de nível para a carta de domínio). Atualize nível e limiares de dano."}];
@@ -811,7 +821,34 @@ const state = {
   levelUp: null,
 };
 const root = document.getElementById('app');
-function render(){ root.innerHTML = View(); attachCropListeners(); attachMapaListeners(); }
+function capturarFoco(){
+  // Qualquer redesenho recria o DOM; guardamos qual campo estava sendo digitado
+  // (e a posição do cursor) para devolver o foco logo depois — assim nenhum campo
+  // "perde a letra" ou sai da caixa, mesmo quando algo dispara render() no meio da digitação.
+  const a = document.activeElement;
+  if(!a || !root.contains || !root.contains(a)) return null;
+  const tag = a.tagName;
+  if(tag!=='INPUT' && tag!=='TEXTAREA' && tag!=='SELECT') return null;
+  if(['file','checkbox','radio','button','submit'].includes(a.type)) return null;
+  const todos = Array.from(root.querySelectorAll(tag));
+  let ini=null, fim=null; try{ ini=a.selectionStart; fim=a.selectionEnd; }catch(e){}
+  return { id:a.id||null, tag, idx:todos.indexOf(a), ini, fim, scroll:a.scrollTop||0 };
+}
+function restaurarFoco(s){
+  if(!s) return;
+  let el = s.id? document.getElementById(s.id) : null;
+  if(!el || el.tagName!==s.tag) el = root.querySelectorAll(s.tag)[s.idx];
+  if(!el) return;
+  try{ el.focus({preventScroll:true}); }catch(e){ el.focus(); }
+  try{ if(s.ini!=null && el.setSelectionRange) el.setSelectionRange(s.ini, s.fim); }catch(e){}
+  try{ el.scrollTop = s.scroll; }catch(e){}
+}
+function render(){
+  const foco = capturarFoco();
+  root.innerHTML = View();
+  attachCropListeners(); attachMapaListeners();
+  restaurarFoco(foco);
+}
 
 /* ============================================================
    AÇÕES
@@ -976,7 +1013,7 @@ App.login = async ()=>{
   }
 };
 App.sair = async ()=>{
-  desligarEspiaCartas();
+  desligarEspiaCartas(); desligarEspiaFichas();
   if(authFB) await authFB.signOut();
   state.usuario=null; state.screen='login'; state.campanha=null;
   render();
@@ -994,7 +1031,6 @@ App.criarCampanha = async ()=>{
   while(await DB.get(K.camp(cod))) cod = code6();
   const c = {codigo:cod, nome, mestre:state.usuario.nome, jogadores:[], criada:Date.now(), medo:0, contagens:[]};
   await DB.set(K.camp(cod), c);
-  await DB.set(K.sheets(cod), []);
   await DB.set(K.rolls(cod), []);
   await DB.set(K.rewards(cod), []);
   const u = await DB.get(K.user(state.usuario.nome)) || state.usuario;
@@ -1035,6 +1071,7 @@ App.sairDaCampanha = async (cod)=>{
 };
 App.deletarCampanha = async (cod, nome)=>{
   if(!confirm(`Deletar "${nome}"? Fichas e rolagens serão perdidas.`)) return;
+  for(const d of await DB.list(K.sheetPrefix(cod))) await DB.del(d);
   await DB.del(K.camp(cod)); await DB.del(K.sheets(cod)); await DB.del(K.rolls(cod));
   await DB.del(K.rewards(cod)); await DB.del(K.cover(cod));
   const u = await DB.get(K.user(state.usuario.nome));
@@ -1055,17 +1092,18 @@ App.abrirMesa = async (cod)=>{
   state.mundoExpandido = {}; state.mundoAbrindoId = null; state.mapaViewer = null;
   state.campanha = c;
   state.capa = await DB.get(K.cover(cod));
-  state.fichas = ((await DB.get(K.sheets(cod))) || []).map(garantirCamposFicha);
+  state.fichas = await carregarFichas(cod);
   state.rolagens = (await DB.get(K.rolls(cod))) || [];
   state.historico = (await DB.get(K.rewards(cod))) || [];
   state.tableTab = (c.mestre===state.usuario.nome) ? 'mestre' : 'personagens';
   state.abertaId = null; state.criando=null; state.recompSel=[];
   state.screen='table';
   ligarEspiaCartas(cod);
+  ligarEspiaFichas(cod);
   render();
 };
 App.voltarHome = async ()=>{
-  desligarEspiaCartas();
+  desligarEspiaCartas(); desligarEspiaFichas();
   state.campanha=null; state.screen='home'; render();
   await recarregarCampanhasHome(); render();
 };
@@ -1224,9 +1262,62 @@ App.abrirPicker = (fichaId)=>{
 };
 App.fecharPicker = ()=>{ state.mostrandoPicker = null; render(); };
 
-async function salvarFichas(lista){
-  state.fichas = lista;
-  await DB.set(K.sheets(state.campanha.codigo), lista);
+/* Cada ficha é um documento próprio (dh:sheet:<campanha>:<id>). Antes todas ficavam num único
+   documento (uma lista): quem salvava sobrescrevia a lista inteira com a sua cópia desatualizada
+   e as fichas dos outros jogadores sumiam. Agora cada um só grava a própria ficha. */
+async function persistirFichas(ids){
+  const cod = state.campanha.codigo;
+  for(const id of ids){
+    const f = state.fichas.find(x=>x.id===id);
+    if(f) await DB.set(K.sheet(cod,id), f);
+  }
+}
+async function removerFichaDoBanco(id){
+  await DB.del(K.sheet(state.campanha.codigo, id));
+}
+async function carregarFichas(cod){
+  const docs = await DB.listValues(K.sheetPrefix(cod));
+  const fichas = docs.map(d=>d.value).filter(v=>v && v.id);
+  // migração do formato antigo (um documento único com todas as fichas)
+  const antigo = await DB.get(K.sheets(cod));
+  if(Array.isArray(antigo)){
+    const ids = new Set(fichas.map(f=>f.id));
+    for(const f of antigo){
+      if(f && f.id && !ids.has(f.id)){ fichas.push(f); await DB.set(K.sheet(cod,f.id), f); }
+    }
+    await DB.del(K.sheets(cod));
+  }
+  return fichas.map(garantirCamposFicha);
+}
+let espiaFichasUnsub = null;
+function ligarEspiaFichas(cod){
+  desligarEspiaFichas();
+  if(!dbFB) return;
+  const prefix = K.sheetPrefix(cod);
+  espiaFichasUnsub = dbFB.collection('appData')
+    .where(firebase.firestore.FieldPath.documentId(), '>=', prefix)
+    .where(firebase.firestore.FieldPath.documentId(), '<', prefix + '\uf8ff')
+    .onSnapshot(snap=>{
+      if(!state.campanha || state.campanha.codigo!==cod) return;
+      let mudou = false;
+      snap.docChanges().forEach(ch=>{
+        if(ch.doc.metadata && ch.doc.metadata.hasPendingWrites) return; // eco da minha própria gravação
+        const id = ch.doc.id.slice(prefix.length);
+        const i = state.fichas.findIndex(x=>x.id===id);
+        if(ch.type==='removed'){ if(i>=0){ state.fichas.splice(i,1); if(state.abertaId===id) state.abertaId=null; mudou=true; } return; }
+        const v = (ch.doc.data()||{}).value; if(!v) return;
+        if(saveTimers[id]) return; // tenho edição local pendente nesta ficha: não sobrescrever
+        if(i>=0){
+          if(JSON.stringify(state.fichas[i])===JSON.stringify(v)) return;
+          state.fichas[i] = garantirCamposFicha(v);
+        } else state.fichas.push(garantirCamposFicha(v));
+        mudou = true;
+      });
+      if(mudou) render();
+    }, ()=>{});
+}
+function desligarEspiaFichas(){
+  if(espiaFichasUnsub){ try{ espiaFichasUnsub(); }catch(e){} espiaFichasUnsub=null; }
 }
 async function salvarUmaFicha(f, semRender){
   // Atualização otimista: aplica localmente e redesenha JÁ; a escrita no
@@ -1234,7 +1325,7 @@ async function salvarUmaFicha(f, semRender){
   const idx = state.fichas.findIndex(x=>x.id===f.id);
   if(idx>=0) state.fichas[idx]=f; else state.fichas.push(f);
   if(!semRender) render();
-  await DB.set(K.sheets(state.campanha.codigo), state.fichas);
+  await DB.set(K.sheet(state.campanha.codigo, f.id), f);
 }
 let rollToastTimer = null;
 function mostrarRollToast(r){
@@ -1777,9 +1868,10 @@ App.wizFinalizar = async ()=>{
 
 App.apagarFicha = async (id, nome)=>{
   if(!confirm(`Apagar "${nome||'sem nome'}"?`)) return;
-  await salvarFichas(state.fichas.filter(f=>f.id!==id));
+  state.fichas = state.fichas.filter(f=>f.id!==id);
   if(state.abertaId===id) state.abertaId=null;
   render();
+  await removerFichaDoBanco(id);
 };
 
 function garantirCamposFicha(f){
@@ -1834,7 +1926,7 @@ function getFicha(id){ const f = state.fichas.find(f=>f.id===id); return f? gara
 const saveTimers = {};
 function agendarSalvar(f){
   clearTimeout(saveTimers[f.id]);
-  saveTimers[f.id] = setTimeout(()=> salvarUmaFicha(f, true), 400);
+  saveTimers[f.id] = setTimeout(()=>{ delete saveTimers[f.id]; salvarUmaFicha(f, true); }, 400);
 }
 App.fCampo = (id, campo, val)=>{ const f=getFicha(id); f[campo]=val; agendarSalvar(f); };
 App.fCampoNum = (id, campo, val)=>{ const f=getFicha(id); f[campo]=Number(val)||0; agendarSalvar(f); };
@@ -2056,7 +2148,7 @@ App.recompConceder = async ()=>{
   if(state.recompSel.length===0) return;
   state.fichas = state.fichas.map(f=> state.recompSel.includes(f.id)
     ? {...f, xp:(f.xp||0)+xp, ouro:{...f.ouro, punhados:(f.ouro?.punhados||0)+ouro}} : f);
-  await DB.set(K.sheets(state.campanha.codigo), state.fichas);
+  await persistirFichas(state.recompSel);
   const h = {id:uid(), ts:Date.now(), alvos:[...state.recompSel],
     nomes: state.fichas.filter(f=>state.recompSel.includes(f.id)).map(f=>f.nome||'Sem nome'),
     xp, ouro, nota, revertido:false};
@@ -2069,20 +2161,20 @@ App.recompReverter = async (hid)=>{
   const h = state.historico.find(x=>x.id===hid); if(!h) return;
   state.fichas = state.fichas.map(f=> h.alvos.includes(f.id)
     ? {...f, xp:Math.max(0,(f.xp||0)-h.xp), ouro:{...f.ouro, punhados:Math.max(0,(f.ouro?.punhados||0)-h.ouro)}} : f);
-  await DB.set(K.sheets(state.campanha.codigo), state.fichas);
+  await persistirFichas(h.alvos);
   state.historico = state.historico.map(x=> x.id===hid? {...x, revertido:true} : x);
   await DB.set(K.rewards(state.campanha.codigo), state.historico);
   render();
 };
 App.resetarXP = async (id)=>{
   state.fichas = state.fichas.map(f=> f.id===id? {...f, xp:0} : f);
-  await DB.set(K.sheets(state.campanha.codigo), state.fichas);
+  await persistirFichas([id]);
   render();
 };
 App.limparFicha = async (id, nome)=>{
   if(!confirm(`Limpar a ficha de ${nome||'sem nome'}? Isso apaga todos os campos.`)) return;
   state.fichas = state.fichas.map(f=> f.id===id? {...novaFicha(f.dono), id:f.id} : f);
-  await DB.set(K.sheets(state.campanha.codigo), state.fichas);
+  await persistirFichas([id]);
   render();
 };
 
