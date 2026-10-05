@@ -176,6 +176,19 @@
   .mapa-viewer-head{display:flex;justify-content:space-between;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line);flex:none;}
   .mapa-frame{flex:1;position:relative;overflow:hidden;background:#000;touch-action:none;cursor:grab;}
   .mapa-frame:active{cursor:grabbing;}
+  .mapa-frame.recorte{display:flex;align-items:center;justify-content:center;}
+  .mapa-crop{position:relative;overflow:hidden;aspect-ratio:var(--asp);width:min(100%, calc((100vh - 130px) * var(--asp)));transform-origin:center;pointer-events:none;}
+  .mapa-frame .mapa-crop img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform-origin:center;}
+  .enq-stage{display:flex;justify-content:center;}
+  .enq-box{position:relative;display:inline-block;line-height:0;max-width:100%;overflow:hidden;border-radius:8px;background:#000;touch-action:none;user-select:none;-webkit-user-select:none;}
+  .enq-box img{display:block;max-width:100%;max-height:58vh;width:auto;height:auto;pointer-events:none;}
+  .enq-rect{position:absolute;border:2px solid var(--hope);box-shadow:0 0 0 9999px rgba(10,7,20,.62);cursor:move;box-sizing:border-box;
+    background-image:linear-gradient(rgba(232,181,79,.35) 1px,transparent 1px),linear-gradient(90deg,rgba(232,181,79,.35) 1px,transparent 1px);background-size:33.333% 33.333%;}
+  .enq-h{position:absolute;width:22px;height:22px;background:var(--hope);border:2px solid var(--ink);border-radius:50%;box-sizing:border-box;}
+  .enq-h[data-c=nw]{left:3px;top:3px;cursor:nwse-resize;} .enq-h[data-c=ne]{right:3px;top:3px;cursor:nesw-resize;}
+  .enq-h[data-c=sw]{left:3px;bottom:3px;cursor:nesw-resize;} .enq-h[data-c=se]{right:3px;bottom:3px;cursor:nwse-resize;}
+  .img-enq{position:relative;overflow:hidden;border-radius:10px;margin-bottom:18px;max-height:70vh;cursor:zoom-in;border:1px solid var(--line);background:var(--field);}
+  .img-enq img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform-origin:center;pointer-events:none;}
   .mapa-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transform-origin:center;user-select:none;-webkit-user-drag:none;pointer-events:none;}
 
   .d12-btn{flex:none;border:1px solid var(--line2);background:var(--ink3);color:var(--hope);border-radius:50%;width:32px;height:32px;
@@ -971,7 +984,7 @@ function render(){
   _ultimoHtml = html;
   const foco = capturarFoco();
   root.innerHTML = html;
-  attachCropListeners(); attachMapaListeners();
+  attachCropListeners(); attachMapaListeners(); attachEnqListeners();
   restaurarFoco(foco);
 }
 
@@ -1055,10 +1068,67 @@ App.mundoArquivoImagem = (id, input)=>{
     if(item){ item.imagem = dataUrl; render(); salvarCampanha(); }
   });
 };
+const ASPECTOS_MUNDO = [['livre','Livre'],['orig','Original'],['16/9','16:9'],['4/3','4:3'],['1/1','Quadrado'],['3/4','Retrato'],['21/9','Panorâmico']];
+/* Recorte do Mundo (v2): um retângulo {x,y,w,h} em frações da imagem INTEIRA. A imagem nunca é cortada
+   no editor; só o que está dentro do retângulo aparece na pré-visualização e na tela cheia. */
+function razaoAspecto(a, nat){          // proporção em pixels de uma proporção escolhida; null = livre
+  if(a==='livre') return null;
+  if(a==='orig') return nat||1;
+  const [l,al] = String(a).split('/').map(Number); return (l&&al)? l/al : (nat||1);
+}
+function enqCss(e){ return e && e.v===2 ? String(e.asp) : aspectoCss(e); }
+function enqImgStyle(e){
+  if(e && e.v===2) return `inset:auto;left:${-e.x/e.w*100}%;top:${-e.y/e.h*100}%;width:${100/e.w}%;height:${100/e.h}%;max-width:none;object-fit:fill;transform:none;`;
+  return `transform:${imgTransform(e)};`;
+}
+function enqLegadoParaRect(e, nat){   // converte o formato antigo (escala/deslocamento sobre moldura) para retângulo
+  const A = e.aspect==='orig'? nat : (razaoAspecto(e.aspect, nat) || nat);
+  let w0=1, h0=1; if(nat>A) w0=A/nat; else h0=nat/A;
+  const s=e.scale||1, w=Math.min(1,w0/s), h=Math.min(1,h0/s);
+  let cx=0.5-(e.ox||0)*w0, cy=0.5-(e.oy||0)*h0;
+  const x=Math.max(0,Math.min(1-w,cx-w/2)), y=Math.max(0,Math.min(1-h,cy-h/2));
+  return {x,y,w,h};
+}
+function aspectoCss(c){   // c.aspect pode ser 'orig' (proporção real da imagem) ou 'L/A'
+  if(c.aspect==='orig') return String(c.natAspect||c.imgAspect||(16/9));
+  return c.aspect||'16/9';
+}
+App.mundoAbrirCrop = (id)=>{
+  const item = mundoEncontrarItem(id, state.campanha.mundo.itens); if(!item) return;
+  const e = item.enq || {};
+  const abrir = (nat)=>{
+    nat = nat || e.natAspect || 16/9;
+    let rect = {x:0,y:0,w:1,h:1}, aspect = 'orig';
+    if(e.v===2){ rect={x:e.x,y:e.y,w:e.w,h:e.h}; aspect=e.aspect||'livre'; }
+    else if(e.aspect){ rect=enqLegadoParaRect(e, nat); aspect=e.aspect; }
+    state.cropEditor = { kind:'mundo', itemId:id, img:item.imagem||'', rect, aspect, natAspect:nat, scale:1, ox:0, oy:0, titulo:'Imagem do arquivo' };
+    render();
+  };
+  if(item.imagem && !(e.natAspect)){   // mede a imagem para conhecer a proporção real
+    const im = new Image(); im.onload = ()=> abrir(im.width/im.height); im.onerror = ()=> abrir(null); im.src = item.imagem;
+  } else abrir(e.natAspect||null);
+};
+App.cropSetAspect = (a)=>{
+  const c = state.cropEditor; if(!c) return;
+  c.aspect = a;
+  if(c.kind==='mundo' && c.rect){
+    const nat = c.natAspect||1, r = razaoAspecto(a, nat);
+    if(r){
+      const q = r/nat;                               // w/h em frações da imagem
+      const R = c.rect, cx=R.x+R.w/2, cy=R.y+R.h/2;
+      let w = Math.sqrt(R.w*R.h*q), hh = w/q;        // mantém a área aproximada
+      if(w>1){ w=1; hh=w/q; } if(hh>1){ hh=1; w=hh*q; }
+      c.rect = { x:Math.max(0,Math.min(1-w,cx-w/2)), y:Math.max(0,Math.min(1-hh,cy-hh/2)), w, h:hh };
+    }
+  }
+  render();
+};
+App.mapaReset = ()=>{ const m=state.mapaViewer; if(m){ m.scale=1; m.ox=0; m.oy=0; render(); } };
+App.mapaAlternarCorte = ()=>{ const m=state.mapaViewer; if(m){ m.inteira=!m.inteira; m.scale=1; m.ox=0; m.oy=0; render(); } };
 App.mundoAbrirMapa = (id)=>{
   const item = mundoEncontrarItem(id, state.campanha.mundo.itens);
   if(!item || !item.imagem) return;
-  state.mapaViewer = { id, nome:item.nome, img:item.imagem, scale:1, ox:0, oy:0 };
+  state.mapaViewer = { id, nome:item.nome, img:item.imagem, enq:item.enq||null, inteira:false, scale:1, ox:0, oy:0 };
   render();
 };
 App.mundoFecharMapa = ()=>{ state.mapaViewer = null; render(); };
@@ -1848,11 +1918,13 @@ App.cropArquivo = (input)=>{
     im.onload = ()=>{
       const cv = document.createElement('canvas');
       const k = state.cropEditor && state.cropEditor.kind;
-      const maxW = k==='retrato'? 640 : k==='carta'? 700 : 1280;   // o suficiente para o tamanho em que cada uma aparece
+      const maxW = k==='retrato'? 640 : k==='carta'? 700 : k==='mundo'? 1600 : 1280;   // o suficiente para o tamanho em que cada uma aparece
       const w = Math.min(maxW, im.width);
       cv.width = w; cv.height = Math.round(im.height/im.width*w);
       cv.getContext('2d').drawImage(im,0,0,cv.width,cv.height);
-      state.cropEditor.img = canvasParaJpeg(cv, 250000);
+      state.cropEditor.img = canvasParaJpeg(cv, k==='mundo'? 850000 : 250000);
+      state.cropEditor.natAspect = cv.width/cv.height;
+      if(k==='mundo'){ state.cropEditor.aspect = 'orig'; state.cropEditor.rect = {x:0,y:0,w:1,h:1}; }   // imagem nova: começa inteira
       state.cropEditor.scale = 1; state.cropEditor.ox = 0; state.cropEditor.oy = 0;
       render();
     };
@@ -1865,6 +1937,16 @@ App.cropSalvar = ()=>{
   const c = state.cropEditor;
   const data = { img:c.img, scale:c.scale, ox:c.ox, oy:c.oy };
   state.cropEditor = null;
+  if(c.kind==='mundo'){
+    const item = mundoEncontrarItem(c.itemId, state.campanha.mundo.itens);
+    if(item){
+      if(c.img){ const R=c.rect, nat=c.natAspect||1; item.imagem = c.img; item.enq = { v:2, aspect:c.aspect, natAspect:nat, x:R.x, y:R.y, w:R.w, h:R.h, asp:(R.w*nat)/R.h }; }
+      else { item.imagem = null; item.imagemRef = false; item.enq = null; }
+      if(state.mapaViewer && state.mapaViewer.id===c.itemId) state.mapaViewer=null;
+    }
+    render(); salvarCampanha();
+    return;
+  }
   if(c.kind==='capa'){
     state.capa = data;
     render();
@@ -2829,6 +2911,11 @@ function mundoArvoreHTML(itens, ehMestre, profundidade){
       </div>`).join('')}
   </div>`;
 }
+function ImagemMundoHTML(item){
+  const e = item.enq;
+  if(!e) return `<img src="${item.imagem}" onclick="App.mundoAbrirMapa('${item.id}')" title="Abrir em tela cheia" style="width:100%;border-radius:10px;margin-bottom:18px;max-height:360px;object-fit:cover;cursor:zoom-in;">`;
+  return `<div class="img-enq" onclick="App.mundoAbrirMapa('${item.id}')" title="Abrir em tela cheia" style="aspect-ratio:${enqCss(e)};"><img src="${item.imagem}" style="${enqImgStyle(e)}"></div>`;
+}
 function MundoArquivoPainelHTML(item, ehMestre){
   const editando = ehMestre && painelEditando('mundoArquivo', item.id);
   return `
@@ -2842,14 +2929,13 @@ function MundoArquivoPainelHTML(item, ehMestre){
       ${ehMestre? `<button class="btn btn-sm ${editando?'btn-gold':''}" style="flex:none;" onclick="App.toggleEditPainel('mundoArquivo','${item.id}')">${editando? icon('check',13)+' Salvar' : icon('lapis',13)+' Editar'}</button>`:''}
     </div>
     ${editando? `<div class="row" style="margin-bottom:16px;gap:10px;flex-wrap:wrap;align-items:center;">
-      <input type="file" accept="image/*" id="mundoImgFile_${item.id}" style="display:none" onchange="App.mundoArquivoImagem('${item.id}', this)">
-      <button class="btn btn-sm" onclick="document.getElementById('mundoImgFile_${item.id}').click()">${icon('imagem',14)} Imagem</button>
+      <button class="btn btn-sm" onclick="App.mundoAbrirCrop('${item.id}')">${icon('imagem',14)} ${item.imagem? 'Ajustar imagem' : 'Adicionar imagem'}</button>
       <label class="row" style="gap:6px;font-size:.85rem;color:var(--muted);cursor:pointer;">
         <input type="checkbox" ${item.ehMapa?'checked':''} onchange="App.mundoToggleMapa('${item.id}')"> Marcar como Mapa
       </label>
     </div>` : ''}
     ${item.ehMapa && item.imagem? `<button class="btn btn-sm btn-purple" style="margin-bottom:16px;" onclick="App.mundoAbrirMapa('${item.id}')">${icon('mapa',14)} Abrir mapa em tela cheia</button>` : ''}
-    ${item.imagem? `<img src="${item.imagem}" style="width:100%;border-radius:10px;margin-bottom:18px;max-height:360px;object-fit:cover;">` : ''}
+    ${item.imagem? ImagemMundoHTML(item) : ''}
     <div class="field"><label>Texto</label>
       ${editando
         ? `<textarea rows="14" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--line2);background:var(--field);color:var(--parch);line-height:1.6;" oninput="App.mundoArquivoCampo('${item.id}','texto',this.value)">${esc(item.texto)}</textarea>`
@@ -2888,10 +2974,16 @@ function MapaViewerModal(){
   return `<div class="mapa-viewer-bg">
     <div class="mapa-viewer-head">
       <span style="font-family:var(--display);color:var(--hope);font-size:1.2rem;">${icon('mapa',18)} ${esc(m.nome)}</span>
-      <button class="btn btn-sm btn-ghost" onclick="App.mundoFecharMapa()">✕ Fechar</button>
+      <div class="row" style="gap:6px;">
+        ${m.enq? `<button class="btn btn-sm btn-ghost" onclick="App.mapaAlternarCorte()">${m.inteira? 'Ver recorte':'Ver imagem inteira'}</button>`:''}
+        <button class="btn btn-sm btn-ghost" onclick="App.mapaReset()">Recentralizar</button>
+        <button class="btn btn-sm btn-ghost" onclick="App.mundoFecharMapa()">✕ Fechar</button>
+      </div>
     </div>
-    <div id="mapaFrame" class="mapa-frame">
-      <img id="mapaImg" src="${m.img}" style="transform:scale(${m.scale}) translate(${m.ox*100}%, ${m.oy*100}%);">
+    <div id="mapaFrame" class="mapa-frame ${m.enq && !m.inteira? 'recorte':''}">
+      ${m.enq && !m.inteira
+        ? `<div id="mapaImg" class="mapa-crop" style="--asp:${enqCss(m.enq)};transform:scale(${m.scale}) translate(${m.ox*100}%, ${m.oy*100}%);"><img src="${m.img}" style="${enqImgStyle(m.enq)}"></div>`
+        : `<img id="mapaImg" src="${m.img}" style="transform:scale(${m.scale}) translate(${m.ox*100}%, ${m.oy*100}%);">`}
     </div>
     <p class="muted" style="text-align:center;font-size:.78rem;padding:8px;margin:0;">Role o mouse pra dar zoom. Arraste pra navegar pelo mapa.</p>
   </div>`;
@@ -3134,22 +3226,84 @@ function Bubble(){
   </div></div>`;
 }
 
+function enqRectStyle(r){ return `left:${r.x*100}%;top:${r.y*100}%;width:${r.w*100}%;height:${r.h*100}%;`; }
+function enqAplicar(){
+  const el=document.getElementById('enqRect'); const c=state.cropEditor;
+  if(el && c && c.rect) el.setAttribute('style', enqRectStyle(c.rect));
+}
+function attachEnqListeners(){
+  const c = state.cropEditor;
+  if(!c || c.kind!=='mundo' || !c.img) return;
+  const box = document.getElementById('enqBox'); if(!box) return;
+  const MIN = 0.04;
+  const q = ()=>{ const r=razaoAspecto(c.aspect, c.natAspect||1); return r? r/(c.natAspect||1) : null; };  // w/h em frações; null = livre
+  let modo=null, start=null;
+  const pos = (e)=>{ const b=box.getBoundingClientRect(); return { x:Math.max(0,Math.min(1,(e.clientX-b.left)/b.width)), y:Math.max(0,Math.min(1,(e.clientY-b.top)/b.height)), bw:b.width, bh:b.height }; };
+  const limitar = (R)=>{ R.w=Math.max(MIN,Math.min(1,R.w)); R.h=Math.max(MIN,Math.min(1,R.h)); R.x=Math.max(0,Math.min(1-R.w,R.x)); R.y=Math.max(0,Math.min(1-R.h,R.y)); return R; };
+  box.onpointerdown = (e)=>{
+    const alvo = e.target.closest ? e.target : e.target;
+    const canto = alvo.dataset && alvo.dataset.c;
+    const dentro = alvo.id==='enqRect' || canto;
+    if(!dentro) return;
+    e.preventDefault(); box.setPointerCapture(e.pointerId);
+    const p = pos(e); start = { p, R:{...c.rect} };
+    if(canto){
+      modo = 'resize';
+      const R=c.rect;  // âncora = canto oposto
+      start.ax = canto.includes('w')? R.x+R.w : R.x;
+      start.ay = canto.includes('n')? R.y+R.h : R.y;
+    } else modo = 'move';
+  };
+  box.onpointermove = (e)=>{
+    if(!modo) return;
+    const p = pos(e); const R = {...start.R};
+    if(modo==='move'){
+      R.x = start.R.x + (p.x-start.p.x); R.y = start.R.y + (p.y-start.p.y); limitar(R);
+    } else {
+      const ax=start.ax, ay=start.ay; const sx = p.x>=ax? 1 : -1, sy = p.y>=ay? 1 : -1;
+      let w = Math.abs(p.x-ax), h = Math.abs(p.y-ay); const Q=q();
+      if(Q){ w = Math.min(w, h*Q); h = w/Q; }
+      const maxW = sx>0? 1-ax : ax, maxH = sy>0? 1-ay : ay;
+      if(Q){ if(w>maxW){ w=maxW; h=w/Q; } if(h>maxH){ h=maxH; w=h*Q; } } else { w=Math.min(w,maxW); h=Math.min(h,maxH); }
+      w=Math.max(MIN,w); h=Q? w/Q : Math.max(MIN,h);
+      R.w=w; R.h=h; R.x = sx>0? ax : ax-w; R.y = sy>0? ay : ay-h;
+    }
+    c.rect = R; enqAplicar();
+  };
+  const fim = (e)=>{ modo=null; start=null; };
+  box.onpointerup = fim; box.onpointercancel = fim;
+  box.onwheel = (e)=>{
+    e.preventDefault();
+    const R={...c.rect}, f = e.deltaY<0? 0.93 : 1.08, Q=q();
+    const cx=R.x+R.w/2, cy=R.y+R.h/2; let w=R.w*f, h=R.h*f;
+    if(Q){ if(w>1){ w=1; h=w/Q; } if(h>1){ h=1; w=h*Q; } }
+    R.w=w; R.h=h; R.x=cx-w/2; R.y=cy-h/2; c.rect=limitar(R); enqAplicar();
+  };
+}
 function CropEditorModal(){
   const c = state.cropEditor;
   const ehCarta = c.kind==='carta';
+  const ehMundo = c.kind==='mundo';
   return `
   <div class="modal-bg"><div class="modal modal-lg">
     <div class="between" style="margin-bottom:16px;">
       <h3 style="font-family:var(--serif);font-size:1.4rem;margin:0;">${esc(c.titulo)}</h3>
       ${ehCarta && c.removivel? `<button class="icon-btn-danger" title="Excluir esta carta" onclick="App.cropExcluirCarta()">${icon('lixeira',18)}</button>` : ''}
     </div>
-    <div id="cropFrame" class="crop-frame" style="aspect-ratio:${c.aspect};max-width:340px;position:relative;">
+    ${ehMundo? `<div class="row" style="gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:12px;">${ASPECTOS_MUNDO.map(([v,n])=>`<button class="btn btn-sm ${c.aspect===v?'':'btn-ghost'}" onclick="App.cropSetAspect('${v}')">${n}</button>`).join('')}</div>` : ''}
+    ${ehMundo? (c.img
+      ? `<div class="enq-stage"><div id="enqBox" class="enq-box"><img id="enqImg" src="${c.img}" draggable="false">
+           <div id="enqRect" class="enq-rect" style="${enqRectStyle(c.rect)}">
+             <span class="enq-h" data-c="nw"></span><span class="enq-h" data-c="ne"></span><span class="enq-h" data-c="sw"></span><span class="enq-h" data-c="se"></span>
+           </div></div></div>`
+      : `<div class="crop-frame" style="aspect-ratio:16/9;max-width:560px;margin:0 auto;"><div class="crop-empty">Escolha uma imagem para começar</div></div>`)
+    : `<div id="cropFrame" class="crop-frame" style="aspect-ratio:${aspectoCss(c)};max-width:340px;max-height:60vh;margin:0 auto;position:relative;">
       ${c.img
         ? `<img id="cropImg" src="${c.img}" style="transform:${imgTransform(c)};">`
         : `<div class="crop-empty">Escolha uma imagem para começar</div>`}
       ${ehCarta && c.img? `<div class="crop-guide-mesa"><span>o que aparece pra mesa</span></div>` : ''}
-    </div>
-    ${c.img? `<p class="crop-hint">Role o mouse ou belisque a tela para aproximar. Arraste para posicionar.${ehCarta? ' A área marcada é o que aparece no aviso pequeno quando você mostra a carta pra mesa.':''}</p>` : ''}
+    </div>`}
+    ${ehMundo? (c.img? `<p class="crop-hint">A imagem aparece inteira. Arraste o quadro para movê-lo; arraste os cantos ou use a roda do mouse para mudar o tamanho. Só o que está dentro do quadro aparece para os jogadores.</p>`:'') : c.img? `<p class="crop-hint">Role o mouse ou belisque a tela para aproximar. Arraste para posicionar.${ehMundo? '':''}${ehCarta? ' A área marcada é o que aparece no aviso pequeno quando você mostra a carta pra mesa.':''}</p>` : ''}
     <input type="file" accept="image/*" id="cropFile" style="display:none" onchange="App.cropArquivo(this)">
     <div class="row" style="justify-content:center;margin:16px 0;">
       <button class="btn" onclick="document.getElementById('cropFile').click()">${icon('imagem',15)} Escolher imagem</button>
