@@ -447,6 +447,10 @@ function hashCurto(s){ let x=5381; for(let i=0;i<s.length;i++) x=((x<<5)+x+s.cha
 function slotCarta(chave){ return 'c_'+chave.replace(/[^A-Za-z0-9]/g,'_').slice(0,40)+'_'+hashCurto(chave); }
 function fichaParaBanco(f, cod){
   const c = {...f}; const escritas = [];
+  // Firestore não aceita lista dentro de lista: os pares [nome, texto] da ancestralidade mista viram objetos
+  if(f.ancestralidadeMista && Array.isArray(f.ancestralidadeMista.habilidades)){
+    c.ancestralidadeMista = {...f.ancestralidadeMista, habilidades: f.ancestralidadeMista.habilidades.map(h=> Array.isArray(h)? {nome:h[0], texto:h[1]} : h)};
+  }
   if(f.retrato && f.retrato.img){ escritas.push([K.img(cod,f.id,'retrato'), f.retrato.img]); c.retrato = {...f.retrato, img:null, imgRef:true}; }
   if(f.cardImages){
     c.cardImages = {};
@@ -624,6 +628,14 @@ async function gravarImagens(escritas){
     try{ await DB.set(id, str); }catch(e){ IMG.delete(id); throw e; }
   }
 }
+function acharArrayAninhado(v, caminho){
+  if(Array.isArray(v)){
+    for(let i=0;i<v.length;i++){ if(Array.isArray(v[i])) return caminho+'['+i+']'; const r=acharArrayAninhado(v[i], caminho+'['+i+']'); if(r) return r; }
+  } else if(v && typeof v==='object'){
+    for(const k of Object.keys(v)){ const r=acharArrayAninhado(v[k], caminho? caminho+'.'+k : k); if(r) return r; }
+  }
+  return null;
+}
 /* ---- Tamanho dos documentos (limite do Firestore: 1 MiB = 1.048.576 bytes por documento) ---- */
 const LIMITE_DOC = 1000000;
 function bytesDe(x){ try{ return new Blob([typeof x==='string'? x : JSON.stringify(x)]).size; }catch(e){ return String(x).length; } }
@@ -676,6 +688,8 @@ async function gravarFichaAgora(f){
     const top = rel.campos.slice(0,3).map(x=>x[0]+' ('+fmtKB(x[1])+')').join(', ');
     const err = new Error('ficha-grande'); err.detalhe = 'O texto da ficha tem '+fmtKB(rel.total)+', acima do limite de 1 MB do banco. Maiores campos: '+top+'. Reduza o conteúdo desses campos.'; throw err;
   }
+  const aninhado = acharArrayAninhado(c, '');
+  if(aninhado){ const err = new Error('lista-aninhada'); err.detalhe = 'A ficha tem uma lista dentro de outra lista (campo '+aninhado+'), que o banco não aceita. Avise o desenvolvedor com este texto.'; throw err; }
   await comTimeout(gravarImagens(escritas), 30000);
   await comTimeout(DB.set(K.sheet(cod, f.id), c), 20000);
 }
@@ -2495,6 +2509,9 @@ function garantirCamposFicha(f){
   if(f.cardImages===undefined) f.cardImages = {};
   if(f.retrato===undefined) f.retrato = null;
   if(f.ancestralidadeMista===undefined) f.ancestralidadeMista = null;
+  if(f.ancestralidadeMista && Array.isArray(f.ancestralidadeMista.habilidades)){
+    f.ancestralidadeMista.habilidades = f.ancestralidadeMista.habilidades.map(h=> Array.isArray(h)? h : [h.nome, h.texto]);
+  }
   garantirRecursos(f);
   if(f.cicatrizes===undefined) f.cicatrizes = 0;
   if(f.status===undefined) f.status = 'vivo';
