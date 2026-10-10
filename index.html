@@ -179,6 +179,9 @@
   .mapa-frame.recorte{display:flex;align-items:center;justify-content:center;}
   .mapa-crop{position:relative;overflow:hidden;aspect-ratio:var(--asp);width:min(100%, calc((100vh - 130px) * var(--asp)));transform-origin:center;pointer-events:none;}
   .mapa-frame .mapa-crop img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform-origin:center;}
+  .img-carregando{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:160px;margin-bottom:18px;border:1px dashed var(--line2);border-radius:10px;background:var(--field);color:var(--muted);}
+  .img-carregando .pulsa{animation:pulsa 1.2s ease-in-out infinite;}
+  @keyframes pulsa{0%,100%{opacity:.45}50%{opacity:1}}
   .enq-stage{display:flex;justify-content:center;}
   .enq-box{position:relative;display:inline-block;line-height:0;max-width:100%;overflow:hidden;border-radius:8px;background:#000;touch-action:none;user-select:none;-webkit-user-select:none;}
   .enq-box img{display:block;max-width:100%;max-height:58vh;width:auto;height:auto;pointer-events:none;}
@@ -370,6 +373,9 @@ function iniciarFirebase(){
   firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
   authFB = firebase.auth();
   dbFB = firebase.firestore();
+  // redes/antivírus/proxies que bloqueiam o canal de streaming do Firestore fazem as gravações travarem só para alguns usuários;
+  // isto detecta e troca automaticamente para long-polling
+  try{ dbFB.settings({ experimentalAutoDetectLongPolling:true, merge:true }); }catch(e){ console.warn('settings', e); }
 }
 if(firebaseConfigurado()) iniciarFirebase();
 
@@ -471,11 +477,143 @@ function mundoParaBanco(itens, cod, escritas){
     return it;
   });
 }
+const IMGVER = new Map();            // versão da imagem do Mundo que está no cache (para detectar troca feita pelo mestre)
+const mundoImgPend = new Map();      // downloads de imagens do Mundo em andamento
+const CAPA_CACHE = new Map();        // capas já baixadas nesta sessão
 function hidratarMundo(itens, cod){
   for(const it of (itens||[])){
     if(it.tipo==='pasta') hidratarMundo(it.itens, cod);
-    else if(it.imagemRef && !it.imagem){ const s = IMG.get(K.mimg(cod,it.id)); if(s) it.imagem = s; }
+    else if(it.imagemRef && !it.imagem){
+      const k = K.mimg(cod,it.id), s = IMG.get(k);
+      if(s && IMGVER.get(k)===it.imgVer) it.imagem = s;      // só reaproveita o cache se for a mesma versão
+    }
   }
+}
+async function obterCapa(cod){
+  if(CAPA_CACHE.has(cod)) return CAPA_CACHE.get(cod);
+  const v = await DB.get(K.cover(cod)); CAPA_CACHE.set(cod, v); return v;
+}
+/* As imagens do Mundo (mapas, ilustrações) só são baixadas quando o arquivo é aberto. */
+function carregarImagemMundo(id){
+  const c = state.campanha; if(!c) return Promise.resolve(null);
+  const item = mundoEncontrarItem(id, c.mundo.itens);
+  if(!item) return Promise.resolve(null);
+  if(item.imagem) return Promise.resolve(item.imagem);
+  if(!item.imagemRef) return Promise.resolve(null);
+  const cod = c.codigo, k = K.mimg(cod,id), ver = item.imgVer;
+  if(IMG.has(k) && IMGVER.get(k)===ver){ item.imagem = IMG.get(k); return Promise.resolve(item.imagem); }
+  if(mundoImgPend.has(k)) return mundoImgPend.get(k);
+  delete state.mundoImgEstado[id]; state.mundoImgEstado[id] = 'carregando';
+  const fim = (v, erro)=>{
+    mundoImgPend.delete(k);
+    if(!state.campanha || state.campanha.codigo!==cod) return null;
+    if(typeof v==='string'){
+      IMG.set(k, v); IMGVER.set(k, ver);
+      const it = mundoEncontrarItem(id, state.campanha.mundo.itens); if(it) it.imagem = v;
+      delete state.mundoImgEstado[id];
+    } else state.mundoImgEstado[id] = 'erro';
+    renderSoon();
+    return typeof v==='string'? v : null;
+  };
+  const pr = DB.get(k).then(v=>fim(v), ()=>fim(null,true));
+  mundoImgPend.set(k, pr);
+  return pr;
+}
+function garantirImagemAberta(){
+  const c = state.campanha; if(!c || !state.mundoAbrindoId) return;
+  const it = mundoEncontrarItem(state.mundoAbrindoId, c.mundo.itens);
+  if(it && it.imagemRef && !it.imagem && state.mundoImgEstado[it.id]!=='erro' && state.mundoImgEstado[it.id]!=='carregando') carregarImagemMundo(it.id);
+}
+let mesaCarregando = false;
+function renderSeCarregada(){ if(!mesaCarregando) renderSoon(); }
+
+/* ===== Segurança das fichas: caixa de saída local, aviso de status e rascunho do assistente ===== */
+const SAVE = { pend:new Set(), erro:null, retry:{}, ts:0 };
+function msgErroSalvar(e){
+  const c = (e && (e.code||e.message)) ? String(e.code||e.message) : '';
+  if(/permission-denied/.test(c)) return 'O banco recusou a gravação (permissão negada). O mestre precisa revisar as regras do Firestore.';
+  if(/resource-exhausted|quota/.test(c)) return 'Limite de uso do Firebase atingido (cota). Tente novamente mais tarde.';
+  if(/unavailable|network|offline/.test(c)) return 'Sem conexão com o servidor.';
+  if(/timeout/.test(c)) return 'O servidor demorou demais para responder.';
+  if(/invalid-argument|too large|exceeds/.test(c)) return 'A ficha ficou grande demais para o banco (provavelmente por imagens).';
+  if(/unauthenticated/.test(c)) return 'Sessão expirada. Entre de novo.';
+  return 'Erro ao salvar'+(c? ' ('+c.slice(0,80)+')':'')+'.';
+}
+function chavePend(cod,id){ return 'dh:pend:'+cod+':'+id; }
+function guardarPendente(f){
+  try{
+    if(!state.campanha) return;
+    const c = JSON.parse(JSON.stringify(f, (k,v)=> (k==='img' && typeof v==='string' && v.length>2000) ? undefined : v));
+    localStorage.setItem(chavePend(state.campanha.codigo, f.id), JSON.stringify(c));
+  }catch(e){ console.warn('outbox', e); }
+}
+function limparPendente(cod,id){ try{ localStorage.removeItem(chavePend(cod,id)); }catch(e){} }
+function temPendente(cod,id){ try{ return localStorage.getItem(chavePend(cod,id))!==null; }catch(e){ return false; } }
+function atualizarStatusSalvar(){
+  if(typeof document==='undefined' || !document.body) return;
+  let el = document.getElementById('saveStatus');
+  if(!el){ el = document.createElement('div'); el.id='saveStatus'; document.body.appendChild(el); }
+  if(SAVE.erro){
+    el.style.cssText='position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:99999;max-width:92vw;background:#5a1a1a;color:#fff;border:2px solid #d4a64a;border-radius:8px;padding:10px 14px;font:14px/1.35 sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.6);display:block;';
+    el.innerHTML = '<b>⚠ Ficha NÃO salva no servidor.</b> '+esc(SAVE.erro)+' Seus dados estão guardados neste aparelho; não limpe o navegador. <button id="saveRetry" style="margin-left:8px;padding:3px 10px;cursor:pointer;">Tentar de novo</button> <button id="saveDiag" style="margin-left:4px;padding:3px 10px;cursor:pointer;">Testar conexão</button>';
+    const b = document.getElementById('saveRetry'); if(b) b.onclick = ()=>App.reenviarPendentes();
+    const d = document.getElementById('saveDiag'); if(d) d.onclick = ()=>App.diagnosticoConexao();
+  } else if(SAVE.pend.size){
+    el.style.cssText='position:fixed;right:12px;bottom:12px;z-index:99999;background:#2b1d44;color:#e9d9a6;border:1px solid #d4a64a;border-radius:6px;padding:4px 10px;font:12px sans-serif;display:block;';
+    el.textContent='Salvando…';
+  } else el.style.display='none';
+}
+function comTimeout(p, ms){
+  return Promise.race([ p, new Promise((_,rej)=>setTimeout(()=>rej({code:'timeout'}), ms)) ]);
+}
+async function reenviarPendentesDaMesa(){
+  if(!state.campanha) return;
+  const cod = state.campanha.codigo, pre = 'dh:pend:'+cod+':';
+  let chaves=[]; try{ for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k && k.startsWith(pre)) chaves.push(k); } }catch(e){}
+  for(const k of chaves){
+    const id = k.slice(pre.length);
+    let v=null; try{ v = JSON.parse(localStorage.getItem(k)); }catch(e){}
+    if(!v || !v.id){ try{localStorage.removeItem(k);}catch(e){} continue; }
+    const i = state.fichas.findIndex(x=>x.id===id);
+    garantirCamposFicha(v);
+    if(i<0) state.fichas.push(v); else { hidratarFicha(v, cod); state.fichas[i]=v; }
+    SAVE.pend.add(id);
+  }
+  if(chaves.length){ renderSeCarregada(); atualizarStatusSalvar(); }
+  for(const k of chaves){
+    const id = k.slice(pre.length), f = state.fichas.find(x=>x.id===id);
+    if(f) { try{ await gravarFicha(f); }catch(e){} }
+  }
+}
+function chaveRascunho(){ return state.usuario && state.campanha ? 'dh:wiz:'+state.usuario.nome+':'+state.campanha.codigo : null; }
+function guardarRascunho(){
+  try{
+    const k = chaveRascunho(); if(!k) return;
+    if(state.criando==='assistente' && state.wizard) localStorage.setItem(k, JSON.stringify(state.wizard));
+  }catch(e){}
+}
+function limparRascunho(){ try{ const k=chaveRascunho(); if(k) localStorage.removeItem(k); }catch(e){} }
+function restaurarRascunho(){
+  try{
+    const k = chaveRascunho(); if(!k) return false;
+    const raw = localStorage.getItem(k); if(!raw) return false;
+    const w = JSON.parse(raw);
+    if(!w || !w.ficha) return false;
+    state.wizard = w; state.criando='assistente'; state.tableTab='personagens';
+    return true;
+  }catch(e){ return false; }
+}
+if(typeof window!=='undefined'){
+  const vazar = ()=>{
+    try{ guardarRascunho(); }catch(e){}
+    try{ for(const id of Object.keys(saveTimers)){ const f=state.fichas.find(x=>x.id===id); if(f) guardarPendente(f); } }catch(e){}
+  };
+  window.addEventListener('pagehide', vazar);
+  window.addEventListener('beforeunload', (e)=>{
+    vazar();
+    if(SAVE.pend.size || Object.keys(saveTimers).length){ e.preventDefault(); e.returnValue=''; }
+  });
+  window.addEventListener('online', ()=>{ if(SAVE.pend.size) App.reenviarPendentes(); });
 }
 async function gravarImagens(escritas){
   for(const [id,str] of escritas){
@@ -487,8 +625,8 @@ async function gravarImagens(escritas){
 async function gravarFichaAgora(f){
   const cod = state.campanha.codigo;
   const { c, escritas } = fichaParaBanco(f, cod);
-  await gravarImagens(escritas);
-  await DB.set(K.sheet(cod, f.id), c);
+  await comTimeout(gravarImagens(escritas), 30000);
+  await comTimeout(DB.set(K.sheet(cod, f.id), c), 20000);
 }
 /* Vários cliques seguidos viram no máximo uma gravação em andamento + uma pendente (a mais nova). */
 const filaGravacao = {};
@@ -505,9 +643,21 @@ function gravarFicha(f){
         const esp = q.esperas.splice(0);
         try{
           const atual = state.fichas.find(x=>x.id===id);
-          if(atual) await gravarFichaAgora(atual);      // ficha apagada no meio do caminho: não recria
+          if(atual){
+            SAVE.pend.add(id); atualizarStatusSalvar();
+            const cod0 = state.campanha && state.campanha.codigo;
+            await gravarFichaAgora(atual);      // ficha apagada no meio do caminho: não recria
+            if(!q.pendente && cod0){ limparPendente(cod0, id); }
+          }
+          SAVE.pend.delete(id); if(!SAVE.pend.size) SAVE.erro=null; atualizarStatusSalvar();
           esp.forEach(e=>e.res());
-        }catch(e){ console.warn('Falha ao salvar ficha', e); esp.forEach(x=>x.rej(e)); }
+        }catch(e){
+          console.warn('Falha ao salvar ficha', e);
+          SAVE.erro = msgErroSalvar(e); atualizarStatusSalvar();
+          clearTimeout(SAVE.retry[id]);
+          SAVE.retry[id] = setTimeout(()=>{ const f2=state.fichas.find(x=>x.id===id); if(f2 && SAVE.pend.has(id)) gravarFicha(f2).catch(()=>{}); }, 15000);
+          esp.forEach(x=>x.rej(e));
+        }
       }while(q.pendente);
       q.rodando = false;
     })();
@@ -731,8 +881,8 @@ function aplicarGanhosDualidade(f, resultado){
 }
 function rollRowHTML(r){
   if(r.tipo==='dualidade'){
-    const cor = r.resultado==='critico'? 'var(--seal)' : r.resultado==='esperanca'? 'var(--hope)' : 'var(--fear)';
-    const lab = r.resultado==='critico'? 'Sucesso crítico' : r.resultado==='esperanca'? 'com Esperança' : 'com Medo';
+    const cor = r.reacao? (r.resultado==='critico'? 'var(--seal)' : 'var(--parch)') : r.resultado==='critico'? 'var(--seal)' : r.resultado==='esperanca'? 'var(--hope)' : 'var(--fear)';
+    const lab = r.reacao? (r.resultado==='critico'? 'reação · crítico' : 'reação') : r.resultado==='critico'? 'Sucesso crítico' : r.resultado==='esperanca'? 'com Esperança' : 'com Medo';
     return `<div class="rollrow">
       <div class="top"><span class="name">${esc(r.autor)} · ${esc(r.rotulo)}</span><span class="time">${hora(r.ts)}</span></div>
       <div class="meta">
@@ -938,10 +1088,10 @@ const state = {
   mistaEditor: null,
   movimentoMorte: null,
   mostrandoBestiario: false, bestiarioPatamar: 1, bestiarioBusca: '',
-  tesouroBusca: '', ultimoTesouro: null, tesouroFonte: 'base',
+  tesouroBusca: '', ultimoTesouro: null, tesouroFonte: 'base', testeReacao: false,
   spotlight: null, spotlightExpandido: null,
   rollToast: null,
-  mundoExpandido: {}, mundoAbrindoId: null, mapaViewer: null,
+  mundoExpandido: {}, mundoAbrindoId: null, mapaViewer: null, mundoImgEstado: {},
   transformando: null, loginForm: null,
   editPaineis: {},
   wizEquipAba: 'fisicas',
@@ -970,6 +1120,7 @@ function restaurarFoco(s){
   try{ if(s.ini!=null && el.setSelectionRange) el.setSelectionRange(s.ini, s.fim); }catch(e){}
   try{ el.scrollTop = s.scroll; }catch(e){}
 }
+root.addEventListener('input', ()=>{ if(state.criando==='assistente') guardarRascunho(); });
 root.addEventListener('keydown', (e)=>{
   if(e.key!=='Enter' || e.isComposing || e.shiftKey) return;
   const id = e.target && e.target.id;
@@ -986,6 +1137,7 @@ function render(){
   root.innerHTML = html;
   attachCropListeners(); attachMapaListeners(); attachEnqListeners();
   restaurarFoco(foco);
+  if(state.criando==='assistente') guardarRascunho();
 }
 
 /* ============================================================
@@ -1007,7 +1159,13 @@ function mundoEncontrarListaPai(id, lista){
   return null;
 }
 App.mundoToggleExpandir = (id)=>{ state.mundoExpandido[id] = !state.mundoExpandido[id]; render(); };
-App.mundoSelecionarArquivo = (id)=>{ state.mundoAbrindoId = id; render(); };
+App.mundoSelecionarArquivo = (id)=>{
+  state.mundoAbrindoId = id;
+  const it = mundoEncontrarItem(id, state.campanha.mundo.itens);
+  if(it && it.imagemRef && !it.imagem) delete state.mundoImgEstado[id];   // uma nova tentativa a cada vez que abre
+  render(); garantirImagemAberta();
+};
+App.mundoRecarregarImagem = (id)=>{ delete state.mundoImgEstado[id]; render(); carregarImagemMundo(id); };
 App.mundoRenomearTab = ()=>{
   const nome = prompt('Nome da aba:', state.campanha.mundo.nome);
   if(!nome) return;
@@ -1065,7 +1223,7 @@ App.mundoArquivoImagem = (id, input)=>{
   const file = input.files[0]; if(!file) return;
   lerImagemRedimensionada(file, 1400, 0.85, (dataUrl)=>{
     const item = mundoEncontrarItem(id, state.campanha.mundo.itens);
-    if(item){ item.imagem = dataUrl; render(); salvarCampanha(); }
+    if(item){ item.imagem = dataUrl; item.imagemRef = true; item.imgVer = Date.now(); IMGVER.set(K.mimg(state.campanha.codigo,item.id), item.imgVer); render(); salvarCampanha(); }
   });
 };
 const ASPECTOS_MUNDO = [['livre','Livre'],['orig','Original'],['16/9','16:9'],['4/3','4:3'],['1/1','Quadrado'],['3/4','Retrato'],['21/9','Panorâmico']];
@@ -1095,6 +1253,13 @@ function aspectoCss(c){   // c.aspect pode ser 'orig' (proporção real da image
 }
 App.mundoAbrirCrop = (id)=>{
   const item = mundoEncontrarItem(id, state.campanha.mundo.itens); if(!item) return;
+  if(item.imagemRef && !item.imagem){     // a imagem ainda não foi baixada: baixa e reabre
+    carregarImagemMundo(id).then(()=>{
+      const it = state.campanha && mundoEncontrarItem(id, state.campanha.mundo.itens);
+      if(it && it.imagem) App.mundoAbrirCrop(id); else alert('Não foi possível carregar a imagem. Tente de novo.');
+    });
+    return;
+  }
   const e = item.enq || {};
   const abrir = (nat)=>{
     nat = nat || e.natAspect || 16/9;
@@ -1127,6 +1292,7 @@ App.mapaReset = ()=>{ const m=state.mapaViewer; if(m){ m.scale=1; m.ox=0; m.oy=0
 App.mapaAlternarCorte = ()=>{ const m=state.mapaViewer; if(m){ m.inteira=!m.inteira; m.scale=1; m.ox=0; m.oy=0; render(); } };
 App.mundoAbrirMapa = (id)=>{
   const item = mundoEncontrarItem(id, state.campanha.mundo.itens);
+  if(item && item.imagemRef && !item.imagem){ carregarImagemMundo(id).then(()=>{ const it=state.campanha && mundoEncontrarItem(id, state.campanha.mundo.itens); if(it && it.imagem) App.mundoAbrirMapa(id); }); return; }
   if(!item || !item.imagem) return;
   state.mapaViewer = { id, nome:item.nome, img:item.imagem, enq:item.enq||null, inteira:false, scale:1, ox:0, oy:0 };
   render();
@@ -1276,6 +1442,7 @@ App.deletarCampanha = async (cod)=>{
   for(const d of await DB.list(K.rollPrefix(cod))) await DB.del(d);
   for(const d of await DB.list(K.imgPrefix(cod))) await DB.del(d);
   for(const d of await DB.list(K.mimgPrefix(cod))) await DB.del(d);
+  CAPA_CACHE.delete(cod);
   await DB.del(K.medo(cod));
   await DB.del(K.camp(cod)); await DB.del(K.sheets(cod)); await DB.del(K.rolls(cod));
   await DB.del(K.rewards(cod)); await DB.del(K.cover(cod));
@@ -1294,22 +1461,26 @@ App.abrirMesa = async (cod)=>{
   if(!c.contagens) c.contagens = [];
   if(!c.ambientes) c.ambientes = [];
   if(!c.mundo) c.mundo = { nome:'O Novo Mundo', itens:[] };
-  state.mundoExpandido = {}; state.mundoAbrindoId = null; state.mapaViewer = null;
-  // tudo o que a mesa precisa é buscado em paralelo (antes era uma fila de esperas)
-  const [capa, fichas, rolagens, md, historico, imgsMundo] = await Promise.all([
-    DB.get(K.cover(cod)), carregarFichas(cod), carregarRolagens(cod), DB.get(K.medo(cod)),
-    DB.get(K.rewards(cod)), DB.listValues(K.mimgPrefix(cod))
-  ]);
-  imgsMundo.forEach(d=>{ if(typeof d.value==='string') IMG.set(d.id, d.value); });
-  hidratarMundo(c.mundo.itens, cod);
-  state.campanha = c; state.capa = capa; state.fichas = fichas; state.rolagens = rolagens;
-  if(md && typeof md.valor==='number') c.medo = md.valor; else await DB.set(K.medo(cod), { valor: c.medo||0 });
-  state.historico = historico || [];
-  state.tableTab = (c.mestre===state.usuario.nome) ? 'mestre' : 'personagens';
+  mesaCarregando = true;
+  try{
+    desligarEspiaCartas(); desligarEspiaFichas();
+    state.campanha = c; state.fichas = []; state.rolagens = [];
+    state.mundoExpandido = {}; state.mundoAbrindoId = null; state.mapaViewer = null; state.mundoImgEstado = {};
+    // Fichas, imagens e rolagens chegam pelos ouvintes em tempo real (a 1ª leitura de cada um já traz tudo),
+    // então não há mais uma busca separada seguida de uma segunda leitura idêntica.
+    const [capa, md, historico] = await Promise.all([ obterCapa(cod), DB.get(K.medo(cod)), DB.get(K.rewards(cod)), migrarLegado(cod) ]);
+    hidratarMundo(c.mundo.itens, cod);
+    if(md && typeof md.valor==='number') state.campanha.medo = md.valor; else await DB.set(K.medo(cod), { valor: c.medo||0 });
+    state.capa = capa; state.historico = historico || [];
+    await ligarEspiaFichas(cod);
+  } finally { mesaCarregando = false; }
+  if(!state.campanha || state.campanha.codigo!==cod) return;   // saiu da mesa enquanto carregava
+  state.tableTab = (state.campanha.mestre===state.usuario.nome) ? 'mestre' : 'personagens';
   state.abertaId = null; state.criando=null; state.recompSel=[];
   state.screen='table';
   ligarEspiaCartas(cod);
-  ligarEspiaFichas(cod);
+  restaurarRascunho();
+  reenviarPendentesDaMesa();
   try{ localStorage.setItem('dh:ultimaMesa', JSON.stringify({u:state.usuario.nome, cod})); }catch(e){}
   render();
 };
@@ -1324,6 +1495,7 @@ App.setTableTab = (t)=>{ state.tableTab=t; state.abertaId=null; state.criando=nu
 App.abrirFicha = (id)=>{ state.abertaId=id; render(); };
 App.fecharFicha = ()=>{ state.abertaId=null; state.criando=null; render(); };
 App.setVantagem = (v)=>{ state.vantagem=v; render(); };
+App.setTesteReacao = (on)=>{ state.testeReacao = !!on; render(); };
 App.toggleBubble = ()=>{ state.bubbleOpen=!state.bubbleOpen; render(); };
 App.toggleGuia = ()=>{ state.guiaAberto = state.guiaAberto===false ? true : false; render(); };
 App.toggleCartas = ()=>{ state.cartasAberto = state.cartasAberto===false ? true : false; render(); };
@@ -1489,57 +1661,54 @@ async function removerFichaDoBanco(id){
   await DB.del(K.sheet(cod, id));
   for(const d of await DB.list(K.img(cod,id,''))){ IMG.delete(d); await DB.del(d); }   // imagens da ficha
 }
-async function carregarFichas(cod){
-  const [docs, imgs] = await Promise.all([ DB.listValues(K.sheetPrefix(cod)), DB.listValues(K.imgPrefix(cod)) ]);
-  imgs.forEach(d=>{ if(d.value) IMG.set(d.id, d.value); });
-  const fichas = docs.map(d=>d.value).filter(v=>v && v.id);
-  // migração do formato antigo (um documento único com todas as fichas)
-  const antigo = await DB.get(K.sheets(cod));
-  if(Array.isArray(antigo)){
-    const ids = new Set(fichas.map(f=>f.id));
-    for(const f of antigo){
-      if(f && f.id && !ids.has(f.id)){ fichas.push(f); await DB.set(K.sheet(cod,f.id), f); }
-    }
+/* Migração (uma vez por aparelho) dos formatos antigos: um documento único com todas as fichas / rolagens. */
+async function migrarLegado(cod){
+  const flag = 'dh:migrado:'+cod;
+  try{ if(localStorage.getItem(flag)) return; }catch(e){}
+  const [antigoF, antigoR] = await Promise.all([ DB.get(K.sheets(cod)), DB.get(K.rolls(cod)) ]);
+  if(Array.isArray(antigoF)){
+    const ids = new Set(await DB.list(K.sheetPrefix(cod)));
+    for(const f of antigoF){ if(f && f.id && !ids.has(K.sheet(cod,f.id))) await DB.set(K.sheet(cod,f.id), f); }
     await DB.del(K.sheets(cod));
   }
-  return fichas.map(f=>hidratarFicha(garantirCamposFicha(f), cod));
-}
-async function carregarRolagens(cod){
-  const docs = await DB.listValues(K.rollPrefix(cod));
-  const rolls = docs.map(d=>d.value).filter(v=>v && v.id && v.ts);
-  const antigo = await DB.get(K.rolls(cod));   // migração do formato antigo (lista única)
-  if(Array.isArray(antigo)){
-    const ids = new Set(rolls.map(r=>r.id));
-    for(const r of antigo){ if(r && r.id && r.ts && !ids.has(r.id)){ rolls.push(r); await DB.set(K.roll(cod,r), r); } }
+  if(Array.isArray(antigoR)){
+    const ids = new Set(await DB.list(K.rollPrefix(cod)));
+    for(const r of antigoR){ if(r && r.id && r.ts && !ids.has(K.roll(cod,r))) await DB.set(K.roll(cod,r), r); }
     await DB.del(K.rolls(cod));
   }
-  rolls.sort((a,b)=>b.ts-a.ts);
-  rolls.slice(200).forEach(r=>{ DB.del(K.roll(cod,r)); });  // poda o histórico muito antigo
-  return rolls.slice(0,80);
+  try{ localStorage.setItem(flag,'1'); }catch(e){}
 }
 let espiaExtrasUnsubs = [];
-function ligarEspiaExtras(cod){
+function ligarEspiaExtras(cod, esperar){
   desligarEspiaExtras();
   if(!dbFB) return;
+  esperar = esperar || (()=>()=>{});
   const col = dbFB.collection('appData');
   const FP = firebase.firestore.FieldPath.documentId();
-  // rolagens dos outros jogadores aparecem ao vivo no histórico
-  const pr = K.rollPrefix(cod);
+  // rolagens: a 1ª leitura do ouvinte já carrega o histórico; depois chegam as dos outros jogadores ao vivo
+  const pr = K.rollPrefix(cod), fimRolls = esperar(); let primeiroRolls = true;
   espiaExtrasUnsubs.push(col.where(FP,'>=',pr).where(FP,'<',pr+'\uf8ff').onSnapshot(snap=>{
-    if(!state.campanha || state.campanha.codigo!==cod) return;
-    let mudou=false;
+    if(!state.campanha || state.campanha.codigo!==cod){ fimRolls(); return; }
+    let mudou=false; const todas=[];
     snap.docChanges().forEach(ch=>{
       if(ch.type==='removed') return;
       const v=(ch.doc.data()||{}).value;
-      if(!v || !v.id || state.rolagens.some(x=>x.id===v.id)) return;
+      if(!v || !v.id || !v.ts) return;
+      todas.push(v);
+      if(state.rolagens.some(x=>x.id===v.id)) return;
       state.rolagens.push(v); mudou=true;
     });
-    if(mudou){ state.rolagens.sort((a,b)=>b.ts-a.ts); state.rolagens=state.rolagens.slice(0,80); renderSoon(); }
-  }, ()=>{}));
-  // imagens das fichas (retrato e cartas) chegam ao vivo
-  const pi = K.imgPrefix(cod);
+    if(primeiroRolls){
+      primeiroRolls=false;
+      if(todas.length>200){ todas.sort((a,b)=>b.ts-a.ts); todas.slice(200).forEach(r=>{ DB.del(K.roll(cod,r)); }); }  // poda o histórico muito antigo
+    }
+    if(mudou){ state.rolagens.sort((a,b)=>b.ts-a.ts); state.rolagens=state.rolagens.slice(0,80); renderSeCarregada(); }
+    fimRolls();
+  }, ()=>fimRolls()));
+  // imagens das fichas (retrato e cartas): também carregadas pela 1ª leitura do ouvinte
+  const pi = K.imgPrefix(cod), fimImgs = esperar();
   espiaExtrasUnsubs.push(col.where(FP,'>=',pi).where(FP,'<',pi+'\uf8ff').onSnapshot(snap=>{
-    if(!state.campanha || state.campanha.codigo!==cod) return;
+    if(!state.campanha || state.campanha.codigo!==cod){ fimImgs(); return; }
     let mudou=false;
     snap.docChanges().forEach(ch=>{
       if(ch.type==='removed') return;
@@ -1548,27 +1717,16 @@ function ligarEspiaExtras(cod){
       const fid = ch.doc.id.slice(pi.length).split(':')[0];
       const f = state.fichas.find(x=>x.id===fid); if(f){ hidratarFicha(f, cod); mudou=true; }
     });
-    if(mudou) renderSoon();
-  }, ()=>{}));
-  // imagens do Mundo (mapas, ilustrações) ao vivo
-  const pm = K.mimgPrefix(cod);
-  espiaExtrasUnsubs.push(col.where(FP,'>=',pm).where(FP,'<',pm+'\uf8ff').onSnapshot(snap=>{
-    if(!state.campanha || state.campanha.codigo!==cod) return;
-    let mudou=false;
-    snap.docChanges().forEach(ch=>{
-      if(ch.type==='removed') return;
-      const v=(ch.doc.data()||{}).value; if(typeof v!=='string' || IMG.get(ch.doc.id)===v) return;
-      IMG.set(ch.doc.id, v); mudou=true;
-    });
-    if(mudou){ hidratarMundo(state.campanha.mundo.itens, cod); renderSoon(); }
-  }, ()=>{}));
+    if(mudou) renderSeCarregada();
+    fimImgs();
+  }, ()=>fimImgs()));
   // Pontos de Medo ao vivo
   espiaExtrasUnsubs.push(col.doc(K.medo(cod)).onSnapshot(snap=>{
     if(!state.campanha || state.campanha.codigo!==cod || !snap.exists) return;
     const v=(snap.data()||{}).value;
-    if(v && typeof v.valor==='number' && v.valor!==state.campanha.medo){ state.campanha.medo=v.valor; renderSoon(); }
+    if(v && typeof v.valor==='number' && v.valor!==state.campanha.medo){ state.campanha.medo=v.valor; renderSeCarregada(); }
   }, ()=>{}));
-  // dados da campanha (Mundo, contagens, jogadores) ao vivo para quem não é o mestre da edição
+  // dados da campanha (Mundo, contagens, jogadores) ao vivo
   espiaExtrasUnsubs.push(col.doc(K.camp(cod)).onSnapshot(snap=>{
     if(!state.campanha || state.campanha.codigo!==cod) return;
     if(!snap.exists){   // o mestre apagou a campanha enquanto você estava na mesa
@@ -1578,14 +1736,15 @@ function ligarEspiaExtras(cod){
     }
     const v=(snap.data()||{}).value; if(!v) return;
     if(campanhaSaveTimer) return;                       // edição local pendente
-    if(v.mundo) hidratarMundo(v.mundo.itens, cod);
+    if(!v.mundo) v.mundo={nome:'O Novo Mundo',itens:[]};
+    if(!v.contagens) v.contagens=[]; if(!v.ambientes) v.ambientes=[];
+    hidratarMundo(v.mundo.itens, cod);
     const semMedo=o=>{ const c={...o}; delete c.medo; return JSON.stringify(c); };
     if(semMedo(v)===semMedo(state.campanha)) return;    // eco da minha própria gravação
     const medo=state.campanha.medo;
-    if(!v.mundo) v.mundo={nome:'O Novo Mundo',itens:[]};
-    if(!v.contagens) v.contagens=[]; if(!v.ambientes) v.ambientes=[];
     state.campanha={...v, medo};
-    renderSoon();
+    garantirImagemAberta();                             // se o mestre trocou a imagem do arquivo aberto, baixa a nova
+    renderSeCarregada();
   }, ()=>{}));
 }
 function desligarEspiaExtras(){
@@ -1594,31 +1753,37 @@ function desligarEspiaExtras(){
 let espiaFichasUnsub = null;
 function ligarEspiaFichas(cod){
   desligarEspiaFichas();
-  if(!dbFB) return;
-  ligarEspiaExtras(cod);
-  const prefix = K.sheetPrefix(cod);
+  if(!dbFB) return Promise.resolve();
+  const aguardando = [];
+  const esperar = ()=>{ let res; aguardando.push(new Promise(r=>{ res=r; })); return res; };
+  ligarEspiaExtras(cod, esperar);
+  const prefix = K.sheetPrefix(cod), fimFichas = esperar();
   espiaFichasUnsub = dbFB.collection('appData')
     .where(firebase.firestore.FieldPath.documentId(), '>=', prefix)
     .where(firebase.firestore.FieldPath.documentId(), '<', prefix + '\uf8ff')
     .onSnapshot(snap=>{
-      if(!state.campanha || state.campanha.codigo!==cod) return;
+      if(!state.campanha || state.campanha.codigo!==cod){ fimFichas(); return; }
       let mudou = false;
       snap.docChanges().forEach(ch=>{
         if(ch.doc.metadata && ch.doc.metadata.hasPendingWrites) return; // eco da minha própria gravação
         const id = ch.doc.id.slice(prefix.length);
         const i = state.fichas.findIndex(x=>x.id===id);
-        if(ch.type==='removed'){ if(i>=0){ state.fichas.splice(i,1); if(state.abertaId===id) state.abertaId=null; mudou=true; } return; }
+        if(ch.type==='removed'){ if(i>=0 && (SAVE.pend.has(id) || temPendente(cod,id))) return; if(i>=0){ state.fichas.splice(i,1); if(state.abertaId===id) state.abertaId=null; mudou=true; } return; }
         const v = (ch.doc.data()||{}).value; if(!v) return;
-        if(saveTimers[id] || (filaGravacao[id] && filaGravacao[id].rodando)) return; // tenho edição/gravação local pendente nesta ficha
+        if(saveTimers[id] || SAVE.pend.has(id) || temPendente(cod,id) || (filaGravacao[id] && filaGravacao[id].rodando)) return; // tenho edição/gravação local pendente nesta ficha
+        garantirCamposFicha(v);
         hidratarFicha(v, cod);
         if(i>=0){
           if(JSON.stringify(state.fichas[i])===JSON.stringify(v)) return;
-          state.fichas[i] = garantirCamposFicha(v);
-        } else state.fichas.push(garantirCamposFicha(v));
+          state.fichas[i] = v;
+        } else state.fichas.push(v);
         mudou = true;
       });
-      if(mudou) renderSoon();
-    }, ()=>{});
+      if(mudou) renderSeCarregada();
+      fimFichas();
+    }, ()=>fimFichas());
+  // se algum ouvinte não responder (erro de rede/permissão), não deixa a mesa travada para sempre
+  return Promise.race([ Promise.all(aguardando), new Promise(r=>setTimeout(r,12000)) ]);
 }
 function desligarEspiaFichas(){
   desligarEspiaExtras();
@@ -1630,12 +1795,16 @@ async function salvarUmaFicha(f, semRender){
   const idx = state.fichas.findIndex(x=>x.id===f.id);
   if(idx>=0) state.fichas[idx]=f; else state.fichas.push(f);
   if(!semRender) render();
+  guardarPendente(f);
   await gravarFicha(f);
 }
 let rollToastTimer = null;
 function mostrarRollToast(r){
   let cor = 'var(--hope)', label = r.rotulo||'Rolagem';
-  if(r.tipo==='dualidade'){
+  if(r.tipo==='dualidade' && r.reacao){
+    cor = r.resultado==='critico'? 'var(--seal)' : 'var(--parch)';
+    label = r.resultado==='critico'? 'Reação · Sucesso Crítico' : 'Teste de Reação';
+  } else if(r.tipo==='dualidade'){
     if(r.resultado==='critico'){ cor='var(--seal)'; label='Sucesso Crítico'; }
     else if(r.resultado==='esperanca'){ cor='var(--hope)'; label='Com Esperança'; }
     else { cor='var(--fear)'; label='Com Medo'; }
@@ -1647,7 +1816,7 @@ function mostrarRollToast(r){
 async function registrarRolagem(r){
   r.autor = r.autor || state.usuario.nome;
   state.rolagens = [r, ...state.rolagens].slice(0,80);
-  if(r.tipo==='dualidade' && r.resultado==='medo' && state.campanha) ganharMedo(1);
+  if(r.tipo==='dualidade' && r.resultado==='medo' && !r.reacao && state.campanha) ganharMedo(1);
   mostrarRollToast(r);
   render();
   await DB.set(K.roll(state.campanha.codigo, r), r);
@@ -1893,7 +2062,8 @@ App.mostrarCartaMesa = async (fichaId, cardKey)=>{
   const rec = {
     ts: Date.now(), autor: state.usuario.nome, personagem: f.nome || 'Personagem',
     titulo: item.titulo, subtitulo: item.subtitulo, texto: item.texto,
-    img: (img && img.img) ? img.img : null, imgTransform: img ? imgTransform(img) : ''
+    img: null, fid: f.id, cardKey,   // a imagem não vai junto: quem recebe já tem a da ficha (poupa download a cada abertura)
+    imgTransform: img ? imgTransform(img) : ''
   };
   espiaCartasUltimoTs = rec.ts; // evita o próprio broadcast reaparecer pra quem mandou
   state.spotlight = rec; render();
@@ -1940,15 +2110,17 @@ App.cropSalvar = ()=>{
   if(c.kind==='mundo'){
     const item = mundoEncontrarItem(c.itemId, state.campanha.mundo.itens);
     if(item){
-      if(c.img){ const R=c.rect, nat=c.natAspect||1; item.imagem = c.img; item.enq = { v:2, aspect:c.aspect, natAspect:nat, x:R.x, y:R.y, w:R.w, h:R.h, asp:(R.w*nat)/R.h }; }
-      else { item.imagem = null; item.imagemRef = false; item.enq = null; }
+      if(c.img){ const R=c.rect, nat=c.natAspect||1;
+        if(c.img!==item.imagem){ item.imgVer = Date.now(); IMGVER.set(K.mimg(state.campanha.codigo,item.id), item.imgVer); }
+        item.imagem = c.img; item.imagemRef = true; item.enq = { v:2, aspect:c.aspect, natAspect:nat, x:R.x, y:R.y, w:R.w, h:R.h, asp:(R.w*nat)/R.h }; }
+      else { item.imagem = null; item.imagemRef = false; item.enq = null; delete item.imgVer; }
       if(state.mapaViewer && state.mapaViewer.id===c.itemId) state.mapaViewer=null;
     }
     render(); salvarCampanha();
     return;
   }
   if(c.kind==='capa'){
-    state.capa = data;
+    state.capa = data; CAPA_CACHE.set(state.campanha.codigo, data);
     render();
     DB.set(K.cover(state.campanha.codigo), data);
   } else if(c.kind==='retrato'){
@@ -2118,10 +2290,18 @@ App.fRemoverArmadura = (fichaId, armaduraId)=>{
   salvarUmaFicha(f);
 };
 
+App.diagnosticoConexao = async ()=>{
+  const k = 'dh:diag:'+(state.usuario? state.usuario.uid||'u':'u');
+  const t0 = Date.now(); let msg='';
+  try{ await comTimeout(DB.set(k,{t:t0}),10000); const v = await comTimeout(DB.get(k),10000); msg = v && v.t===t0 ? 'Conexão OK: gravou e leu em '+(Date.now()-t0)+' ms.' : 'Gravou, mas não conseguiu ler de volta.'; }
+  catch(e){ msg = 'FALHOU: '+msgErroSalvar(e)+'\nCódigo: '+((e&&(e.code||e.message))||'?')+'\nNavegador: '+navigator.userAgent+'\nOnline: '+navigator.onLine; }
+  alert(msg);
+};
+App.reenviarPendentes = ()=>{ SAVE.erro=null; atualizarStatusSalvar(); for(const id of Array.from(SAVE.pend)){ const f=state.fichas.find(x=>x.id===id); if(f) gravarFicha(f).catch(()=>{}); } reenviarPendentesDaMesa(); };
 App.criarFichaZero = async ()=>{
   const f = state.tableTab==='npcs' ? novoNPC() : state.tableTab==='ambientes' ? novoAmbiente() : novaFicha(state.campanha.mestre===state.usuario.nome ? '' : state.usuario.nome);
-  await salvarUmaFicha(f, true);
-  state.abertaId = f.id; render();
+  state.abertaId = f.id;
+  salvarUmaFicha(f, false).catch(()=>{});
 };
 App.abrirAssistente = ()=>{
   state.criando='assistente';
@@ -2132,7 +2312,7 @@ App.abrirAssistente = ()=>{
   state.wizEquipAba = 'fisicas';
   render();
 };
-App.cancelarAssistente = ()=>{ state.criando=null; state.wizard=null; render(); };
+App.cancelarAssistente = ()=>{ limparRascunho(); state.criando=null; state.wizard=null; render(); };
 App.wizPasso = (p)=>{ state.wizard.passo = p; render(); };
 App.wizClasse = (nome)=>{
   const base = novaFicha(state.usuario.nome, nome);
@@ -2195,7 +2375,8 @@ App.wizCartaToggle = (key)=>{
   render();
 };
 App.wizFinalizar = async ()=>{
-  const w = state.wizard;
+  const w = state.wizard; if(!w) return;
+  try{
   const f = {...w.ficha, experiencias: w.ficha.experiencias.filter(e=>e && e.nome)};
   const c = CLASSES[f.classe];
   if(c){
@@ -2206,9 +2387,11 @@ App.wizFinalizar = async ()=>{
     f.inventario = ['Tocha, 15m de corda, suprimentos básicos', pocaoTexto, itemClasse];
   }
   f.mao = [...w.cartasEscolhidas];
-  await salvarUmaFicha(f, true);
+  garantirCamposFicha(f);
+  limparRascunho();
   state.criando=null; state.wizard=null; state.abertaId=f.id;
-  render();
+  salvarUmaFicha(f, false).catch(()=>{});     // a ficha já aparece; a gravação segue em segundo plano e avisa se falhar
+  }catch(e){ console.error(e); alert('Não foi possível concluir a criação: '+(e && e.message || e)+'\nSeu progresso foi mantido; tire um print desta mensagem e envie ao mestre.'); }
 };
 
 App.apagarFicha = async (id)=>{
@@ -2278,7 +2461,7 @@ function getFicha(id){ const f = state.fichas.find(f=>f.id===id); return f? gara
 const saveTimers = {};
 function agendarSalvar(f){
   clearTimeout(saveTimers[f.id]);
-  saveTimers[f.id] = setTimeout(()=>{ delete saveTimers[f.id]; salvarUmaFicha(f, true); }, 400);
+  saveTimers[f.id] = setTimeout(()=>{ delete saveTimers[f.id]; salvarUmaFicha(f, true).catch(()=>{}); }, 400);
 }
 App.fCampo = (id, campo, val)=>{ const f=getFicha(id); f[campo]=val; agendarSalvar(f); };
 App.fCampoNum = (id, campo, val)=>{ const f=getFicha(id); f[campo]=Number(val)||0; agendarSalvar(f); };
@@ -2386,8 +2569,10 @@ App.compTreinamento = (id, nome, checked)=>{
 
 App.rolarAtributo = (id, chave, nome)=>{
   const f=getFicha(id);
-  const r = rolarDualidade(f.nome||'Sem nome', `Teste de ${nome}${bonusDeTransformacao(f)? ' (Agraciado +1)':''}`, (f.atributos[chave]||0)+bonusDeTransformacao(f), 0, state.vantagem);
-  aplicarGanhosDualidade(f, r.resultado);
+  const reacao = !!state.testeReacao;
+  const r = rolarDualidade(f.nome||'Sem nome', `${reacao? 'Teste de reação' : 'Teste'} de ${nome}${bonusDeTransformacao(f)? ' (Agraciado +1)':''}`, (f.atributos[chave]||0)+bonusDeTransformacao(f), 0, state.vantagem);
+  if(reacao) r.reacao = true;                 // teste de reação: não gera Esperança nem Medo (livro, p.99)
+  else aplicarGanhosDualidade(f, r.resultado);
   registrarRolagem(r);
 };
 App.rolarExperiencia = (id, i)=>{
@@ -2625,7 +2810,7 @@ function CapaHTML(capa, curto){
 async function recarregarCampanhasHome(){
   const cods = (state.usuario && state.usuario.campanhas) || [];
   const resultados = await Promise.all(cods.map(async c=>{
-    const [camp, cover] = await Promise.all([DB.get(K.camp(c)), DB.get(K.cover(c))]);
+    const [camp, cover] = await Promise.all([DB.get(K.camp(c)), obterCapa(c)]);
     return { c, camp, cover };
   }));
   state.minhasCampanhasCache = resultados.filter(x=>x.camp);
@@ -2912,6 +3097,12 @@ function mundoArvoreHTML(itens, ehMestre, profundidade){
   </div>`;
 }
 function ImagemMundoHTML(item){
+  if(!item.imagem){   // imagem existe no banco mas ainda não foi baixada
+    const erro = state.mundoImgEstado[item.id]==='erro';
+    return `<div class="img-carregando">${erro
+      ? `<span>Não foi possível carregar a imagem.</span><button class="btn btn-sm btn-gold" onclick="App.mundoRecarregarImagem('${item.id}')">Tentar de novo</button>`
+      : `<span class="pulsa">Carregando imagem…</span>`}</div>`;
+  }
   const e = item.enq;
   if(!e) return `<img src="${item.imagem}" onclick="App.mundoAbrirMapa('${item.id}')" title="Abrir em tela cheia" style="width:100%;border-radius:10px;margin-bottom:18px;max-height:360px;object-fit:cover;cursor:zoom-in;">`;
   return `<div class="img-enq" onclick="App.mundoAbrirMapa('${item.id}')" title="Abrir em tela cheia" style="aspect-ratio:${enqCss(e)};"><img src="${item.imagem}" style="${enqImgStyle(e)}"></div>`;
@@ -2929,13 +3120,13 @@ function MundoArquivoPainelHTML(item, ehMestre){
       ${ehMestre? `<button class="btn btn-sm ${editando?'btn-gold':''}" style="flex:none;" onclick="App.toggleEditPainel('mundoArquivo','${item.id}')">${editando? icon('check',13)+' Salvar' : icon('lapis',13)+' Editar'}</button>`:''}
     </div>
     ${editando? `<div class="row" style="margin-bottom:16px;gap:10px;flex-wrap:wrap;align-items:center;">
-      <button class="btn btn-sm" onclick="App.mundoAbrirCrop('${item.id}')">${icon('imagem',14)} ${item.imagem? 'Ajustar imagem' : 'Adicionar imagem'}</button>
+      <button class="btn btn-sm" onclick="App.mundoAbrirCrop('${item.id}')">${icon('imagem',14)} ${(item.imagem||item.imagemRef)? 'Ajustar imagem' : 'Adicionar imagem'}</button>
       <label class="row" style="gap:6px;font-size:.85rem;color:var(--muted);cursor:pointer;">
         <input type="checkbox" ${item.ehMapa?'checked':''} onchange="App.mundoToggleMapa('${item.id}')"> Marcar como Mapa
       </label>
     </div>` : ''}
     ${item.ehMapa && item.imagem? `<button class="btn btn-sm btn-purple" style="margin-bottom:16px;" onclick="App.mundoAbrirMapa('${item.id}')">${icon('mapa',14)} Abrir mapa em tela cheia</button>` : ''}
-    ${item.imagem? ImagemMundoHTML(item) : ''}
+    ${(item.imagem||item.imagemRef)? ImagemMundoHTML(item) : ''}
     <div class="field"><label>Texto</label>
       ${editando
         ? `<textarea rows="14" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--line2);background:var(--field);color:var(--parch);line-height:1.6;" oninput="App.mundoArquivoCampo('${item.id}','texto',this.value)">${esc(item.texto)}</textarea>`
@@ -3480,6 +3671,13 @@ function RollToastHTML(){
     <div class="roll-toast-by">${esc(r.autor)}${r.rotulo? ' · '+esc(r.rotulo):''}</div>
   </div></div>`;
 }
+function imagemDoSpotlight(r){
+  if(r.img) return r.img;
+  if(!r.fid || !state.campanha) return null;
+  const f = state.fichas.find(x=>x.id===r.fid);
+  const v = f && f.cardImages && f.cardImages[r.cardKey]; if(v && v.img) return v.img;
+  return IMG.get(K.img(state.campanha.codigo, r.fid, slotCarta(r.cardKey))) || null;
+}
 function SpotlightHTML(){
   // aviso compacto no canto inferior esquerdo — não bloqueia o resto da tela.
   // clicar nele expande a carta inteira (SpotlightExpandidoHTML).
@@ -3488,7 +3686,7 @@ function SpotlightHTML(){
   return `<div class="spotlight-corner" onclick="App.expandirSpotlight()">
     <div class="spotlight-corner-card">
       <button class="spotlight-corner-close" onclick="event.stopPropagation();App.fecharSpotlight()">✕</button>
-      ${r.img? `<div class="spotlight-corner-img"><img src="${r.img}" style="transform:${r.imgTransform||''};"></div>` : `<div class="spotlight-corner-img" style="display:flex;align-items:center;justify-content:center;">${icon('carta',18)}</div>`}
+      ${imagemDoSpotlight(r)? `<div class="spotlight-corner-img"><img src="${imagemDoSpotlight(r)}" style="transform:${r.imgTransform||''};"></div>` : `<div class="spotlight-corner-img" style="display:flex;align-items:center;justify-content:center;">${icon('carta',18)}</div>`}
       <div class="spotlight-corner-body">
         <div class="spotlight-corner-by">${esc(r.autor)}${r.personagem? ' · '+esc(r.personagem):''} mostra</div>
         <div class="spotlight-corner-title">${esc(r.titulo)}</div>
@@ -3503,7 +3701,7 @@ function SpotlightExpandidoHTML(){
   return `<div class="modal-bg" onclick="App.fecharSpotlightExpandido()">
     <div class="spotlight-card" onclick="event.stopPropagation()">
       <button class="spotlight-close" onclick="App.fecharSpotlightExpandido()">✕</button>
-      ${r.img? `<div class="spotlight-img"><img src="${r.img}" style="transform:${r.imgTransform||''};"></div>` : ''}
+      ${imagemDoSpotlight(r)? `<div class="spotlight-img"><img src="${imagemDoSpotlight(r)}" style="transform:${r.imgTransform||''};"></div>` : ''}
       <div class="spotlight-body">
         <div class="spotlight-by">${esc(r.autor)}${r.personagem? ' · '+esc(r.personagem):''} mostra</div>
         <h3 class="spotlight-title">${esc(r.titulo)}</h3>
@@ -4396,12 +4594,19 @@ function FichaHTML(f, ehMestre){
 
   <div class="panel">
     <div class="panel-head"><h3>${lapisEditBtn('atributos',f.id)}Atributos</h3>
-      <div class="row" style="gap:4px;">
-        ${[[1,'Vantagem'],[0,'Normal'],[-1,'Desvantagem']].map(([v,n])=>`
-          <button class="btn btn-sm ${state.vantagem===v?'':'btn-ghost'}" onclick="App.setVantagem(${v})">${n}</button>`).join('')}
+      <div class="row" style="gap:10px;flex-wrap:wrap;justify-content:flex-end;">
+        <div class="row" style="gap:4px;" title="Teste de reação não gera Esperança nem Medo">
+          <button class="btn btn-sm ${!state.testeReacao?'':'btn-ghost'}" onclick="App.setTesteReacao(false)">Teste</button>
+          <button class="btn btn-sm ${state.testeReacao?'btn-purple':'btn-ghost'}" onclick="App.setTesteReacao(true)">Reação</button>
+        </div>
+        <div class="row" style="gap:4px;">
+          ${[[1,'Vantagem'],[0,'Normal'],[-1,'Desvantagem']].map(([v,n])=>`
+            <button class="btn btn-sm ${state.vantagem===v?'':'btn-ghost'}" onclick="App.setVantagem(${v})">${n}</button>`).join('')}
+        </div>
       </div>
     </div>
     <div class="panel-body">
+      ${state.testeReacao? `<p style="margin:0 0 12px;font-size:13px;color:var(--fear);">Modo <strong>teste de reação</strong>: as rolagens abaixo não geram Esperança nem Medo. Volte para "Teste" para rolar normalmente.</p>` : ''}
       <div class="grid g6">
         ${ATRIBUTOS.map(a=>`
           <div class="attrbox">
@@ -4410,7 +4615,7 @@ function FichaHTML(f, ehMestre){
               ? `<input type="number" value="${f.atributos[a.k]}" onchange="App.fSubNum('${f.id}','atributos','${a.k}',this.value)">`
               : `<div class="stat-display lg">${f.atributos[a.k]}</div>`}
             <div class="v">${a.v}</div>
-            <button class="icon-btn-roll" style="margin:6px auto 0;" title="Rolar ${a.n}" onclick="App.rolarAtributo('${f.id}','${a.k}','${a.n}')">${icon('dado',16)}</button>
+            <button class="icon-btn-roll" style="margin:6px auto 0;" title="${state.testeReacao? 'Teste de reação de ':'Rolar '}${a.n}" onclick="App.rolarAtributo('${f.id}','${a.k}','${a.n}')">${icon('dado',16)}</button>
           </div>`).join('')}
       </div>
     </div>
