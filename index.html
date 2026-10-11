@@ -258,6 +258,27 @@
   .empty p.big{font-family:var(--display);font-size:1.6rem;margin:0 0 10px;color:var(--parch);}
   .empty p.small{font-size:1rem;color:var(--muted);margin:0 0 20px;}
 
+  .dado-link{display:inline;padding:0 5px;margin:0 1px;border-radius:5px;border:1px solid var(--blood);background:rgba(232,128,122,.12);color:var(--blood);font:inherit;font-weight:700;cursor:pointer;white-space:nowrap;}
+  .dado-link:hover{background:rgba(232,128,122,.28);}
+  .tag-chip{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:999px;border:1px solid var(--fear);background:rgba(155,123,212,.15);color:var(--parch);font-size:11.5px;cursor:pointer;}
+  .tag-chip.on{background:var(--fear);color:var(--ink);}
+  .npc-edit input,.npc-edit textarea,.npc-edit select{padding:5px 8px;font-size:13px;border-radius:6px;border:1px solid var(--line2);background:var(--ink);color:var(--parch);font-family:inherit;}
+  .npc-edit textarea{width:100%;}
+  .npc-edit label.l{display:block;font-size:10px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin:6px 0 2px;}
+  .npc-layout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:16px;align-items:start;}
+  .npc-lista{position:sticky;top:8px;max-height:calc(100vh - 110px);overflow-y:auto;display:flex;flex-direction:column;gap:4px;}
+  .npc-item{display:block;width:100%;text-align:left;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--parch);cursor:pointer;}
+  .npc-item:hover{background:var(--ink3);}
+  .npc-item.sel{border-color:var(--hope);background:var(--ink3);}
+  .npc-item b{font-family:var(--serif);font-weight:600;font-size:15px;display:block;}
+  .npc-item small{color:var(--muted);font-size:11.5px;}
+  .npc-card{border:1px solid var(--line2);border-radius:10px;background:var(--field);padding:14px 16px;}
+  .npc-faixa{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line2);border:1px solid var(--line2);border-radius:8px;overflow:hidden;margin:10px 0;}
+  .npc-faixa>div{background:var(--ink2,#1d1635);padding:6px 8px;text-align:center;}
+  .npc-faixa label{display:block;font-size:10px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin-top:4px;}
+  .npc-faixa .v{font-size:17px;font-weight:700;color:var(--parch);}
+  .npc-hab{font-size:13px;line-height:1.4;margin-top:6px;}
+  @media (max-width:820px){ .npc-layout{grid-template-columns:1fr;} .npc-lista{position:static;max-height:220px;} .npc-faixa{grid-template-columns:repeat(2,minmax(0,1fr));} }
   .listitem{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;
             border-radius:11px;border:1px solid var(--line);background:var(--field);margin-bottom:10px;}
   .listitem .info{font-size:1rem;}
@@ -961,7 +982,29 @@ function rollRowHTML(r){
   return `<div class="rollrow">
     <div class="top"><span class="name">${r.autor? esc(r.autor)+' · ':''}${esc(r.rotulo)}</span><span class="time">${hora(r.ts)}</span></div>
     <div class="meta"><span class="muted">[${r.dados.join(', ')}]${r.mod? ' '+sgn(r.mod):''}</span>
-    <span class="rtotal" style="color:var(--hope)">${r.total}</span></div></div>`;
+    <span class="rtotal" style="color:${r.dano? 'var(--blood)':'var(--hope)'}">${r.total}</span></div></div>`;
+}
+/* Sequências como 3d4+10 em textos de adversários e ambientes viram botões que rolam exatamente aquilo. */
+const RE_DADOS = /(^|[^\w])(\d{1,2})d(\d{1,3})(?:\s*([+\-−–])\s*(\d{1,3}))?(?![\w])/g;   // sem lookbehind: navegadores antigos (iOS < 16.4) não o entendem
+function normalizarDado(m, qtd, lados, sinal, mod){
+  return qtd+'d'+lados+(mod? ((sinal==='+')? '+' : '-')+mod : '');
+}
+function textoComDados(txt, autor, hab){
+  const html = esc(txt||'').replace(RE_DADOS, (mm,pre,q,l,sg,md)=>{ const m = mm.slice(pre.length); return pre+`<button class="dado-link" title="Rolar ${normalizarDado(m,q,l,sg,md)}" data-e="${normalizarDado(m,q,l,sg,md)}" data-a="${esc(autor||'')}" data-h="${esc(hab||'')}" onclick="App.rolarDadoTexto(this)">${m}</button>`; });
+  return html.replace(/\n/g,'<br>');
+}
+function dadosChipsHTML(txt, autor, hab){
+  const vistos = new Set(), out=[];
+  String(txt||'').replace(RE_DADOS,(mm,pre,q,l,sg,md)=>{ const m=mm.slice(pre.length); const e=normalizarDado(m,q,l,sg,md); if(!vistos.has(e)){ vistos.add(e); out.push(`<button class="dado-link" data-e="${e}" data-a="${esc(autor||'')}" data-h="${esc(hab||'')}" onclick="App.rolarDadoTexto(this)">${e.replace('-','−')}</button>`); } return mm; });
+  return out.length? `<div class="muted" style="font-size:12px;margin-top:6px;">Rolar: ${out.join(' ')}</div>` : '';
+}
+function rolarDadoTexto(el){
+  const m = String(el.dataset.e).match(/^(\d+)d(\d+)(?:([+-])(\d+))?$/); if(!m) return;
+  const qtd = Math.min(50, Number(m[1])), lados = Math.min(1000, Number(m[2])), mod = m[3]? (m[3]==='-'?-1:1)*Number(m[4]) : 0;
+  const dados = Array.from({length:qtd}, ()=>d(lados));
+  const total = dados.reduce((a,b)=>a+b,0)+mod;
+  const h = el.dataset.h;
+  registrarRolagem({id:uid(), ts:Date.now(), tipo:'simples', dano:true, autor: el.dataset.a || undefined, rotulo:(h? h+' · ' : '')+el.dataset.e.replace('-','−'), dados, mod, total});
 }
 function dominiosDaClasse(classe){
   const c = CLASSES[classe]; if(!c) return [];
@@ -1153,7 +1196,7 @@ const state = {
   origemAberto: false,
   mistaEditor: null,
   movimentoMorte: null,
-  mostrandoBestiario: false, bestiarioPatamar: 1, bestiarioBusca: '', bestiarioFonte: 'todos', mostrandoAmbientes: false, ambBibPatamar: 1, ambBibBusca: '', ambBibTipo: 'Todos',
+  mostrandoBestiario: false, bestiarioPatamar: 1, bestiarioBusca: '', bestiarioFonte: 'todos', bestiarioTipo: 'Todos', npcBusca: '', npcTagsSel: [], mostrandoAmbientes: false, ambBibPatamar: 1, ambBibBusca: '', ambBibTipo: 'Todos',
   tesouroBusca: '', ultimoTesouro: null, tesouroFonte: 'base', testeReacao: false,
   spotlight: null, spotlightExpandido: null,
   rollToast: null,
@@ -1868,7 +1911,7 @@ async function salvarUmaFicha(f, semRender){
 }
 let rollToastTimer = null;
 function mostrarRollToast(r){
-  let cor = 'var(--hope)', label = r.rotulo||'Rolagem';
+  let cor = r.dano? 'var(--blood)' : 'var(--hope)', label = r.rotulo||'Rolagem';
   if(r.tipo==='dualidade' && r.reacao){
     cor = r.resultado==='critico'? 'var(--seal)' : 'var(--parch)';
     label = r.resultado==='critico'? 'Reação · Sucesso Crítico' : 'Teste de Reação';
@@ -1898,6 +1941,7 @@ App.rolarLivre = (prefix)=>{
   const total = dados.reduce((a,b)=>a+b,0)+mod;
   registrarRolagem({id:uid(), ts:Date.now(), tipo:'simples', rotulo:`${qtd}d${lados}${mod? sgn(mod):''}`, dados, mod, total});
 };
+App.rolarDadoTexto = rolarDadoTexto;
 App.setLados = (prefix, l)=>{ document.getElementById(prefix+'Lados').value=l; };
 App.rolarDualidadeMesa = (vant)=>{
   const rot = vant>0?'Dualidade (vantagem)': vant<0?'Dualidade (desvantagem)':'Dualidade';
@@ -2376,7 +2420,7 @@ App.diagnosticoConexao = async ()=>{
 App.reenviarPendentes = ()=>{ SAVE.erro=null; atualizarStatusSalvar(); for(const id of Array.from(SAVE.pend)){ const f=state.fichas.find(x=>x.id===id); if(f) gravarFicha(f).catch(()=>{}); } reenviarPendentesDaMesa(); };
 App.criarFichaZero = async ()=>{
   const f = state.tableTab==='npcs' ? novoNPC() : state.tableTab==='ambientes' ? novoAmbiente() : novaFicha(state.campanha.mestre===state.usuario.nome ? '' : state.usuario.nome);
-  state.abertaId = f.id;
+  state.abertaId = f.id; if(f.tipo==='npc') state.npcEditando = f.id;
   salvarUmaFicha(f, false).catch(()=>{});
 };
 App.abrirAssistente = ()=>{
@@ -2486,6 +2530,7 @@ function garantirCamposFicha(f){
     }
     if(!f.habilidades) f.habilidades = [];
     if(f.experiencia===undefined) f.experiencia = '';
+    if(!Array.isArray(f.tags)) f.tags = [];
     if(f.retrato===undefined) f.retrato = null;
     return f;
   }
@@ -2680,7 +2725,6 @@ App.rolarDano = (id, armaCampo)=>{
 };
 
 App.npcCampo = (id, campo, val)=>{ const n=getFicha(id); n[campo]=val; agendarSalvar(n); };
-App.npcCampoNum = (id, campo, val)=>{ const n=getFicha(id); n[campo]=Number(val)||0; agendarSalvar(n); };
 App.npcMaxCampo = (id, campoMax, campoAtual, val)=>{
   const n=getFicha(id);
   n[campoMax] = Math.max(0, Number(val)||0);
@@ -2689,9 +2733,9 @@ App.npcMaxCampo = (id, campoMax, campoAtual, val)=>{
 };
 App.npcAtaqueCampo = (id, sub, val)=>{ const n=getFicha(id); n.ataque[sub]=val; agendarSalvar(n); };
 App.npcPip = (id, campo, n)=>{ const npc=getFicha(id); npc[campo]=n; salvarUmaFicha(npc); };
-App.npcAtacar = ()=>{
-  const n = getFicha(state.abertaId);
-  const mod = Number(String(n.ataque.atr).replace(/[^\-0-9]/g,''))||0;
+App.npcAtacar = (id)=>{
+  const n = getFicha(id||state.abertaId);
+  const mod = Number(String(n.ataque.atr).replace(/[−–]/g,'-').replace(/[^\-0-9]/g,''))||0;
   const roll = d(20)+mod;
   registrarRolagem({id:uid(), ts:Date.now(), tipo:'simples', autor:n.nome||'NPC',
     rotulo:`Ataque · ${n.ataque.nome||'golpe'} (d20${sgn(mod)})`, dados:[roll-mod], mod, total:roll});
@@ -2720,7 +2764,8 @@ App.ambienteCampo = (id, campo, val)=>{ const a=getFicha(id); a[campo]=val; agen
 App.ambienteCampoNum = (id, campo, val)=>{ const a=getFicha(id); a[campo]=Number(val)||0; agendarSalvar(a); };
 
 /* ---------- Bestiário ---------- */
-App.abrirBestiario = ()=>{ state.mostrandoBestiario = true; state.bestiarioPatamar = 1; state.bestiarioBusca = ''; state.bestiarioFonte = 'todos'; render(); };
+App.abrirBestiario = ()=>{ state.mostrandoBestiario = true; state.bestiarioPatamar = 1; state.bestiarioBusca = ''; state.bestiarioFonte = 'todos'; state.bestiarioTipo = 'Todos'; render(); };
+App.bestiarioSetTipo = (t)=>{ state.bestiarioTipo = t; render(); };
 App.fecharBestiario = ()=>{ state.mostrandoBestiario = false; render(); };
 App.bestiarioSetPatamar = (p)=>{ state.bestiarioPatamar = p; render(); };
 App.bestiarioSetFonte = (f)=>{ state.bestiarioFonte = f; render(); };
@@ -3136,14 +3181,134 @@ function TabPersonagens(ehMestre){
   `;
 }
 
+function todasTagsNPC(){
+  const set = new Set();
+  state.fichas.filter(f=>f.tipo==='npc').forEach(n=>(n.tags||[]).forEach(t=>set.add(t)));
+  return Array.from(set).sort((a,b)=>a.localeCompare(b,'pt-BR',{sensitivity:'base'}));
+}
+function npcRetratoHTML(n){
+  const r = n.retrato;
+  if(r && r.img) return `<button onclick="App.abrirCropRetrato('${n.id}')" class="portrait" title="Trocar retrato" style="width:44px;display:flex;flex:none;">${`<img src="${r.img}" style="transform:${imgTransform(r)};">`}</button>`;
+  return `<button onclick="App.abrirCropRetrato('${n.id}')" class="portrait" title="Adicionar retrato" style="width:64px;display:flex;flex:none;">✦</button>`;
+}
+function npcTagsHTML(n, editavel){
+  const tags = n.tags || [];
+  const chips = tags.map(t=>`<span class="tag-chip" style="cursor:default;">${esc(t)}${editavel? ` <b style="cursor:pointer;" title="Remover tag" onclick="App.npcTagRem('${n.id}',${JSON.stringify(t).replace(/"/g,'&quot;')})">×</b>`:''}</span>`).join(' ');
+  const add = editavel? `<span style="display:inline-flex;gap:4px;"><input list="tagsNpc" id="tagNova_${n.id}" placeholder="nova tag" style="width:110px;" onkeydown="if(event.key==='Enter'){App.npcTagAdd('${n.id}');}"><button class="btn btn-sm" onclick="App.npcTagAdd('${n.id}')">+ tag</button></span><datalist id="tagsNpc">${todasTagsNPC().map(t=>`<option value="${esc(t)}">`).join('')}</datalist>` : '';
+  return (chips||add)? `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;">${chips}${add}</div>` : '';
+}
+function npcCompactoHTML(n){
+  const lim = n.limiarMaior? (n.limiarMaior + (n.limiarGrave? ' / '+n.limiarGrave : '')) : '—';
+  const hab = (n.habilidades||[]).map(h=>`<div class="npc-hab"><b style="color:var(--hope);">${esc(h.nome)}</b> <span class="muted" style="font-size:11.5px;">(${esc(h.tipo)}${h.custo? ' · '+esc(h.custo):''})</span>: ${textoComDados(h.texto, n.nome, h.nome)}</div>`).join('');
+  const exp = (n.experiencia||'').trim();
+  return `<div class="npc-card">
+    <div style="display:flex;gap:12px;align-items:flex-start;">
+      ${npcRetratoHTML(n)}
+      <div style="flex:1;min-width:0;">
+        <div class="between" style="gap:8px;align-items:flex-start;">
+          <div><div style="font-family:var(--serif);font-size:22px;color:var(--parch);text-transform:uppercase;line-height:1.1;">${esc(n.nome)||'Sem nome'}</div>
+            <div style="color:var(--hope);font-size:12.5px;margin-top:2px;">${esc(n.papel)} · ${n.patamar}º patamar</div></div>
+          <div class="row" style="gap:6px;flex:none;"><button class="btn btn-sm" title="Editar" onclick="App.npcEditar('${n.id}')">${icon('lapis',14)} Editar</button><button class="btn btn-sm btn-danger" title="Apagar" onclick="App.apagarFicha('${n.id}')">${icon('lixeira',14)}</button></div>
+        </div>
+        ${npcTagsHTML(n,false)}
+        ${n.descricao? `<div class="muted" style="font-size:12.5px;font-style:italic;margin-top:6px;">${esc(n.descricao)}</div>`:''}
+      </div>
+    </div>
+    ${n.motivacoes? `<div style="font-size:12.5px;margin-top:8px;"><b>Motivações e táticas:</b> ${esc(n.motivacoes)}</div>`:''}
+    <div class="npc-faixa">
+      <div><div class="v">${n.dificuldade}</div><label>Dificuldade</label></div>
+      <div><div class="v">${lim}</div><label>Limiares</label></div>
+      <div><div style="min-height:24px;display:flex;align-items:center;justify-content:center;">${pipsHTML(n.id,'pv',n.pv,n.pvMax,'var(--blood)',true)}</div><label>PV (${n.pv}/${n.pvMax})</label></div>
+      <div><div style="min-height:24px;display:flex;align-items:center;justify-content:center;">${pipsHTML(n.id,'pf',n.pf,n.pfMax,'var(--fear)',true)}</div><label>Fadiga (${n.pf}/${n.pfMax})</label></div>
+    </div>
+    <div class="between" style="gap:8px;flex-wrap:wrap;font-size:13.5px;">
+      <div><b>ATQ ${esc(n.ataque.atr)}</b> | ${esc(n.ataque.nome)}: ${esc(n.ataque.alcance)} | ${textoComDados(n.ataque.dano, n.nome, n.ataque.nome||'Dano')}</div>
+      <button class="btn btn-sm btn-gold" onclick="App.npcAtacar('${n.id}')">${icon('espada',14)} Rolar ataque</button>
+    </div>
+    ${exp? `<div style="font-size:13px;margin-top:6px;"><b>Experiência:</b> ${esc(exp)}</div>`:''}
+    ${hab? `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:6px;"><div style="font-size:10.5px;letter-spacing:.12em;color:var(--muted);">HABILIDADES</div>${hab}</div>`:''}
+  </div>`;
+}
+/* Edição dentro da própria ficha resumida (sem abrir a página grande). Os campos salvam sozinhos. */
+function npcEdicaoHTML(n){
+  const I = (c, extra)=>`<input value="${esc(n[c])}" oninput="App.npcCampo('${n.id}','${c}',this.value)" ${extra||''}>`;
+  const N = (c, w)=>`<input type="number" style="width:${w||64}px;" value="${n[c]}" oninput="App.npcCampoNum('${n.id}','${c}',this.value)">`;
+  const A = (c, w, ph)=>`<input value="${esc(n.ataque[c])}" style="${w? 'width:'+w+'px;':'flex:1;min-width:90px;'}" placeholder="${ph||''}" oninput="App.npcAtaqueCampo('${n.id}','${c}',this.value)">`;
+  const habs = (n.habilidades||[]).map(h=>`<div style="border:1px solid var(--line);border-radius:7px;padding:8px;margin-top:6px;">
+      <div class="row" style="gap:6px;flex-wrap:wrap;"><input style="flex:2;min-width:120px;" value="${esc(h.nome)}" placeholder="Nome" oninput="App.habCampo('${n.id}','${h.id}','nome',this.value)">
+        <select onchange="App.habCampo('${n.id}','${h.id}','tipo',this.value)">${['passiva','ação','reação'].map(t=>`<option ${h.tipo===t?'selected':''}>${t}</option>`).join('')}</select>
+        <input style="width:90px;" value="${esc(h.custo||'')}" placeholder="Custo" oninput="App.habCampo('${n.id}','${h.id}','custo',this.value)">
+        <button class="btn btn-sm btn-danger" onclick="App.habRemover('${n.id}','${h.id}')">✕</button></div>
+      <textarea rows="2" style="margin-top:6px;" oninput="App.habCampo('${n.id}','${h.id}','texto',this.value)">${esc(h.texto)}</textarea>
+      ${dadosChipsHTML(h.texto, n.nome, h.nome)}
+    </div>`).join('');
+  return `<div class="npc-card npc-edit">
+    <div class="between" style="margin-bottom:6px;"><span class="muted" style="font-size:12px;">Editando — as alterações salvam sozinhas</span>
+      <button class="btn btn-sm btn-gold" onclick="App.npcFecharEdicao()">${icon('check',14)} Concluir</button></div>
+    <div style="display:flex;gap:12px;align-items:flex-start;">
+      ${npcRetratoHTML(n)}
+      <div style="flex:1;min-width:0;">
+        <div class="row" style="gap:6px;flex-wrap:wrap;align-items:center;">
+          <input style="flex:2;min-width:150px;font-family:var(--serif);font-size:17px;" value="${esc(n.nome)}" placeholder="Nome" oninput="App.npcCampo('${n.id}','nome',this.value)">
+          <input list="tiposAdv" style="width:130px;" value="${esc(n.papel)}" placeholder="Tipo" oninput="App.npcCampo('${n.id}','papel',this.value)"><datalist id="tiposAdv">${TIPOS_ADVERSARIO.map(t=>`<option value="${t}">`).join('')}</datalist>
+          <span class="muted" style="font-size:12px;">Patamar</span>${`<input type="number" min="1" max="4" style="width:56px;" value="${n.patamar}" oninput="App.npcCampoNum('${n.id}','patamar',this.value)">`}
+        </div>
+        ${npcTagsHTML(n,true)}
+      </div>
+    </div>
+    <label class="l">Descrição</label><textarea rows="2" oninput="App.npcCampo('${n.id}','descricao',this.value)">${esc(n.descricao)}</textarea>
+    <label class="l">Motivações e táticas</label>${I('motivacoes','style="width:100%;"')}
+    <div class="row" style="gap:10px;flex-wrap:wrap;margin-top:8px;align-items:flex-end;">
+      <div><label class="l">Dificuldade</label>${N('dificuldade')}</div>
+      <div><label class="l">Limiar maior</label>${N('limiarMaior')}</div>
+      <div><label class="l">Limiar grave</label>${N('limiarGrave')}</div>
+      <div><label class="l">PV máx.</label><input type="number" style="width:64px;" value="${n.pvMax}" onchange="App.npcMaxCampo('${n.id}','pvMax','pv',this.value)"></div>
+      <div><label class="l">PF máx.</label><input type="number" style="width:64px;" value="${n.pfMax}" onchange="App.npcMaxCampo('${n.id}','pfMax','pf',this.value)"></div>
+    </div>
+    <label class="l">Ataque (modificador · nome · alcance · dano)</label>
+    <div class="row" style="gap:6px;flex-wrap:wrap;">${A('atr',64,'+2')}${A('nome',null,'Nome')}${A('alcance',null,'Alcance')}${A('dano',null,'Dano (ex: 1d8+2 fís)')}</div>
+    <label class="l">Experiência</label>${I('experiencia','style="width:100%;" placeholder="ex: Ladino +2, Furtividade +3"')}
+    <div class="between" style="margin-top:10px;"><span style="font-size:10.5px;letter-spacing:.12em;color:var(--muted);">HABILIDADES</span><button class="btn btn-sm" onclick="App.habAdd('${n.id}')">+ Habilidade</button></div>
+    ${habs || '<div class="muted" style="font-size:12.5px;margin-top:4px;">Nenhuma habilidade.</div>'}
+    <div class="muted" style="font-size:11.5px;margin-top:8px;">Dica: escreva dados como 3d4+10 nas habilidades; ao concluir, eles viram botões que rolam exatamente isso.</div>
+  </div>`;
+}
+App.npcEditar = (id)=>{ state.abertaId=id; state.npcEditando=id; render(); };
+App.npcFecharEdicao = ()=>{ state.npcEditando=null; render(); };
+App.npcBuscar = (v)=>{ state.npcBusca=v; render(); };
+App.npcCampoNum = (id, campo, val)=>{ const n=getFicha(id); n[campo]=Number(val)||0; agendarSalvar(n); };
+App.npcTagAdd = (id)=>{
+  const el = document.getElementById('tagNova_'+id); const t = (el && el.value || '').trim().replace(/\s+/g,' ').slice(0,30); if(!t) return;
+  const n = getFicha(id); n.tags = n.tags || [];
+  if(!n.tags.some(x=>x.toLowerCase()===t.toLowerCase())) n.tags.push(t);
+  salvarUmaFicha(n);
+};
+App.npcTagRem = (id, t)=>{ const n=getFicha(id); n.tags=(n.tags||[]).filter(x=>x!==t); salvarUmaFicha(n); };
+App.npcTagFiltro = (t)=>{ const a = state.npcTagsSel||[]; state.npcTagsSel = a.includes(t)? a.filter(x=>x!==t) : [...a,t]; render(); };
+App.npcTagLimpar = ()=>{ state.npcTagsSel=[]; render(); };
 function TabNPCs(){
   if(state.criando==='npc-wizard' && state.npcWiz) return NPCWizardHTML();
-  const aberta = state.fichas.find(f=>f.id===state.abertaId && f.tipo==='npc');
-  if(aberta) return NPCHTML(aberta);
-  const npcs = state.fichas.filter(f=>f.tipo==='npc');
+  const todos = state.fichas.filter(f=>f.tipo==='npc');
+  const busca = (state.npcBusca||'').toLowerCase().trim();
+  const tagsSel = (state.npcTagsSel||[]).filter(t=>todasTagsNPC().includes(t));
+  const npcs = todos
+    .filter(n=>!busca || (n.nome||'').toLowerCase().includes(busca) || (n.papel||'').toLowerCase().includes(busca))
+    .filter(n=>!tagsSel.length || (n.tags||[]).some(t=>tagsSel.includes(t)))
+    .sort((a,b)=>(a.nome||'').localeCompare(b.nome||'','pt-BR',{sensitivity:'base'}));
+  const sel = todos.find(f=>f.id===state.abertaId) || null;
+  const editando = sel && state.npcEditando===sel.id;
+  const tags = todasTagsNPC();
   return `
-  <div style="margin-bottom:20px;" class="row"><button class="btn btn-gold" onclick="App.npcwAbrir()">${icon('mais',15)} Criar com o assistente</button><button class="btn" onclick="App.criarFichaZero()">Criar do zero</button><button class="btn btn-purple" onclick="App.abrirBestiario()">${icon('caveira',15)} Bestiário</button></div>
-  ${ListaFichasHTML(npcs, 'Nenhum adversário criado ainda')}
+  <div style="margin-bottom:16px;" class="row"><button class="btn btn-gold" onclick="App.npcwAbrir()">${icon('mais',15)} Criar com o assistente</button><button class="btn" onclick="App.criarFichaZero()">Criar do zero</button><button class="btn btn-purple" onclick="App.abrirBestiario()">${icon('caveira',15)} Bestiário</button></div>
+  ${todos.length===0? `<div class="empty"><p class="big">Nenhum adversário criado ainda</p></div>` : `
+  <div class="npc-layout">
+    <div>
+      <input placeholder="Buscar..." value="${esc(state.npcBusca||'')}" oninput="App.npcBuscar(this.value)" style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--line2);background:var(--field);color:var(--parch);margin-bottom:8px;">
+      ${tags.length? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;">${tags.map(t=>`<span class="tag-chip ${tagsSel.includes(t)?'on':''}" onclick="App.npcTagFiltro(${JSON.stringify(t).replace(/"/g,'&quot;')})">${esc(t)}</span>`).join('')}${tagsSel.length? `<span class="muted" style="font-size:11.5px;cursor:pointer;align-self:center;text-decoration:underline;" onclick="App.npcTagLimpar()">limpar</span>`:''}</div>`:''}
+      <div class="npc-lista">${npcs.length? npcs.map(n=>`<button class="npc-item ${sel&&sel.id===n.id?'sel':''}" onclick="App.abrirFicha('${n.id}')"><b>${esc(n.nome)||'Sem nome'}</b><small>${esc(n.papel)} · P${n.patamar} · Dif ${n.dificuldade} · PV ${n.pv}/${n.pvMax} · PF ${n.pf}/${n.pfMax}</small></button>`).join('') : '<p class="muted" style="font-size:13px;">Nenhum resultado.</p>'}</div>
+    </div>
+    <div>${sel? (editando? npcEdicaoHTML(sel) : npcCompactoHTML(sel)) : `<div class="empty"><p class="big">Escolha um adversário na lista</p></div>`}</div>
+  </div>`}
   `;
 }
 
@@ -3800,11 +3965,15 @@ function BestiarioModal(){
   const patamar = state.bestiarioPatamar || 1;
   const busca = (state.bestiarioBusca||'').toLowerCase().trim();
   const fonte = state.bestiarioFonte || 'todos';
+  const tipoSel = state.bestiarioTipo || 'Todos';
+  const tiposBest = Array.from(new Set(BESTIARIO.map(m=>m.tipo))).sort((a,b)=>a.localeCompare(b,'pt-BR'));
   const itens = BESTIARIO
     .map((mon, idx) => ({ mon, idx }))
     .filter(x => x.mon.patamar === patamar)
     .filter(x => fonte==='todos' || (fonte==='HF') === (x.mon.fonte==='HF'))
-    .filter(x => !busca || x.mon.nome.toLowerCase().includes(busca) || x.mon.tipo.toLowerCase().includes(busca) || (x.mon.nomeOriginal||'').toLowerCase().includes(busca));
+    .filter(x => tipoSel==='Todos' || x.mon.tipo===tipoSel)
+    .filter(x => !busca || x.mon.nome.toLowerCase().includes(busca) || x.mon.tipo.toLowerCase().includes(busca) || (x.mon.nomeOriginal||'').toLowerCase().includes(busca))
+    .sort((a,b)=>a.mon.nome.localeCompare(b.mon.nome,'pt-BR',{sensitivity:'base'}));
   return `<div class="modal-bg"><div class="modal modal-lg">
     <h3 style="font-family:var(--serif);font-size:1.4rem;margin:0 0 6px;">${icon('caveira',22)} Bestiário</h3>
     <p class="muted" style="font-size:.85rem;margin:0 0 16px;">${BESTIARIO.length} adversários (livro base + Esperança &amp; Medo), prontos pra soltar na mesa.</p>
@@ -3812,6 +3981,7 @@ function BestiarioModal(){
     <div class="row" style="margin-bottom:12px;">
       ${[1,2,3,4].map(p=>`<button class="btn btn-sm ${patamar===p?'':'btn-ghost'}" onclick="App.bestiarioSetPatamar(${p})">${p}º patamar</button>`).join('')}
     </div>
+    <div class="row" style="margin-bottom:10px;flex-wrap:wrap;gap:6px;">${['Todos',...tiposBest].map(t=>`<button class="btn btn-sm ${tipoSel===t?'':'btn-ghost'}" onclick="App.bestiarioSetTipo('${t}')">${t}</button>`).join('')}</div>
     <input placeholder="Buscar por nome ou tipo (ex: líder, horda)..." value="${esc(state.bestiarioBusca||'')}" oninput="App.bestiarioBuscar(this.value)" style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid var(--line2);background:var(--field);color:var(--parch);margin-bottom:14px;">
     <div style="max-height:420px;overflow-y:auto;">
       ${itens.length===0? '<p class="muted">Nenhum adversário encontrado.</p>' : itens.map(({mon,idx})=>`
@@ -4494,6 +4664,33 @@ function CompanionPanelHTML(f){
     </div>
   </div></div>`;
 }
+function tituloCase(t){
+  const peq = new Set(['de','da','do','das','dos','e','a','o','para','com','em','ou']);
+  return String(t).toLowerCase().split(/\s+/).map((w,i)=> (i>0 && peq.has(w))? w : w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+}
+/* Habilidades de classe: o texto da ficha ("NOME — descrição", separadas por linha em branco) vira uma carta por habilidade. */
+function cartasDeClasse(f){
+  const txt = typeof f.habilidades==='string' ? f.habilidades.trim() : '';
+  if(!txt) return [];
+  return txt.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean).map((par,i)=>{
+    const m = par.match(/^([A-ZÀ-ÝÇ0-9][A-ZÀ-ÝÇ0-9 ,'’\-]*?)\s+[—–-]\s+([\s\S]*)$/);
+    const titulo = m? tituloCase(m[1]) : 'Habilidade de classe '+(i+1);
+    return { key:`Classe|${titulo}`, titulo, subtitulo:`${f.classe} · habilidade de classe`, texto: m? m[2].trim() : par };
+  });
+}
+function cartasDeSubclasse(f){
+  const s = f.classe && f.subclasseId && SUBCLASSES[f.classe] && SUBCLASSES[f.classe][f.subclasseId];
+  if(!s) return {itens:[], bloqueio:''};
+  const tier = f.subclasseTier||0, itens = [];
+  const add = (lista, rot)=> (lista||[]).forEach(([n,t])=>itens.push({key:`Subclasse|${n}`, titulo:n, subtitulo:`${f.subclasseId} · ${rot}`, texto:t}));
+  add(s.fundamentais, 'fundamental');
+  if(tier>=1) add(s.especializacao, 'especialização');
+  if(tier>=2) add(s.maestria, 'maestria');
+  const bl = [];
+  if(tier<1 && s.especializacao && s.especializacao.length) bl.push('Especialização ainda bloqueada — desbloqueie subindo de nível.');
+  else if(tier<2 && s.maestria && s.maestria.length && tier>=1) bl.push('Maestria ainda bloqueada — desbloqueie subindo de nível.');
+  return {itens, bloqueio: bl.join(' '), atributo: s.atributo||''};
+}
 function categoriasCartas(f){
   const ancHabs = getAncestralidadeHabs(f);
   const com = COMUNIDADES_INFO[f.comunidade];
@@ -4502,6 +4699,8 @@ function categoriasCartas(f){
   const feiticos = todasCartas.filter(x=> x.carta.tipo.includes('Feitiço') || x.carta.tipo.includes('Grimório'));
   const talentos = todasCartas.filter(x=> x.carta.tipo==='Talento');
   const cats = [];
+  const cls = cartasDeClasse(f); if(f.classe) cats.push({id:'classe', nome:`Classe (${cls.length})`, itens: cls});
+  const sub = cartasDeSubclasse(f); if(sub.itens.length || sub.bloqueio) cats.push({id:'subclasse', nome:`Subclasse (${sub.itens.length})`, itens: sub.itens, aviso: sub.bloqueio, atributo: sub.atributo});
   if(ancHabs) cats.push({id:'ancestralidade', nome:'Ancestralidade', itens: ancHabs.map(([n,t])=>(
     {key:`Ancestralidade|${n}`, titulo:n, subtitulo:f.ancestralidade, texto:t}))});
   if(com) cats.push({id:'comunidade', nome:'Comunidade', itens: [
@@ -4534,7 +4733,7 @@ function cardTileHTML(f, it){
   </div>`;
 }
 function CartasPersonagemPanelHTML(f){
-  if(!f.classe) return `<div class="panel"><div class="panel-head"><h3>${icon('carta')} Cartas do Personagem</h3></div>
+  if(!f.classe) return `<div class="panel"><div class="panel-head"><h3>${icon('carta')} Baralho do Personagem</h3></div>
     <div class="panel-body"><p class="muted" style="margin:0;">Escolha uma classe para ver as cartas.</p></div></div>`;
   const cats = categoriasCartas(f);
   const aberto = state.cartasAberto !== false;
@@ -4543,7 +4742,7 @@ function CartasPersonagemPanelHTML(f){
   const catAtual = cats.find(c=>c.id===sel);
   return `<div class="panel">
     <div class="panel-head" style="cursor:pointer;" onclick="App.toggleCartas()">
-      <h3>${icon('carta')} Cartas do Personagem</h3>
+      <h3>${icon('carta')} Baralho do Personagem</h3>
       <span class="muted" style="font-size:.9rem;">${aberto? 'recolher ▲':'expandir ▼'}</span>
     </div>
     ${aberto? `<div class="panel-body">
@@ -4551,9 +4750,13 @@ function CartasPersonagemPanelHTML(f){
         ${cats.map(c=>`<button class="btn btn-sm ${sel===c.id?'':'btn-ghost'}" onclick="App.setCartasCategoria('${c.id}')">${esc(c.nome)}</button>`).join('')}
         <button class="btn btn-sm btn-gold" style="margin-left:auto;" onclick="App.abrirPicker('${f.id}')">${icon('mais',15)} Adicionar carta</button>
       </div>
+      ${sel==='classe'? `<div class="row" style="margin-bottom:10px;gap:8px;align-items:center;">${lapisEditBtn('habClasse',f.id)}<span class="muted" style="font-size:12px;">${painelEditando('habClasse',f.id)? 'Editando o texto das habilidades (uma por parágrafo, no formato NOME — descrição).' : 'Editar o texto das habilidades de classe'}</span></div>
+        ${painelEditando('habClasse',f.id)? `<textarea rows="10" style="width:100%;margin-bottom:12px;padding:9px 12px;border-radius:7px;border:1px solid var(--line2);background:var(--field);color:var(--parch);line-height:1.5;" oninput="App.fCampo('${f.id}','habilidades',this.value)">${esc(f.habilidades)}</textarea>`:''}`:''}
+      ${sel==='subclasse' && catAtual && catAtual.atributo? `<p class="muted" style="margin:0 0 10px;font-size:13px;">Atributo de conjuração: <strong style="color:var(--parch);">${esc(catAtual.atributo)}</strong></p>`:''}
       ${catAtual && catAtual.itens.length
         ? `<div class="cardgrid">${catAtual.itens.map(it=>cardTileHTML(f,it)).join('')}</div>`
         : '<p class="muted" style="margin:0;">Nada nesta categoria ainda.</p>'}
+      ${catAtual && catAtual.aviso? `<p class="muted" style="margin:12px 0 0;font-style:italic;">${esc(catAtual.aviso)}</p>`:''}
     </div>` : ''}
   </div>`;
 }
@@ -4855,13 +5058,6 @@ function FichaHTML(f, ehMestre){
           <div class="stat-label-ro" style="padding:5px 0;">${esc(it)||'—'}</div>`).join('') }
         </div></div>
 
-      <div class="panel" data-accent="magic"><div class="panel-head"><h3>${lapisEditBtn('habClasse',f.id)}${icon('livro')} Habilidades de classe</h3></div><div class="panel-body">
-        ${painelEditando('habClasse',f.id)
-          ? `<textarea rows="10" style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid var(--line2);background:var(--field);color:var(--parch);line-height:1.5;" oninput="App.fCampo('${f.id}','habilidades',this.value)">${esc(f.habilidades)}</textarea>`
-          : `<div class="stat-label-ro" style="white-space:pre-wrap;line-height:1.5;">${esc(f.habilidades)||'—'}</div>`}
-      </div></div>
-
-      ${SubclassPanelHTML(f)}
       ${MulticlassePanelHTML(f)}
       ${GuiaPersonagemPanelHTML(f)}
       ${f.classe==='Druida'? BeastFormPanelHTML(f) : ''}
@@ -4913,6 +5109,7 @@ function HabilidadesListHTML(f){
             <div class="field"><label>Custo (opcional)</label><input value="${esc(h.custo)}" placeholder="ex: 1 Medo" oninput="App.habCampo('${f.id}','${h.id}','custo',this.value)"></div>
           </div>
           <textarea rows="2" style="width:100%;padding:9px 12px;border-radius:7px;border:1px solid var(--line2);background:var(--field);color:var(--parch);" oninput="App.habCampo('${f.id}','${h.id}','texto',this.value)">${esc(h.texto)}</textarea>
+          ${f.tipo==='ambiente'? dadosChipsHTML(h.texto, f.nome, h.nome) : ''}
           ${f.tipo==='ambiente'? `<textarea rows="2" placeholder="Perguntas para a mesa (opcional)" style="width:100%;margin-top:8px;padding:9px 12px;border-radius:7px;border:1px solid var(--line2);background:var(--field);color:var(--parch);font-style:italic;" oninput="App.habCampo('${f.id}','${h.id}','perguntas',this.value)">${esc(h.perguntas||'')}</textarea>`:''}
           <button class="btn btn-sm btn-danger" style="margin-top:8px;" onclick="App.habRemover('${f.id}','${h.id}')">Remover</button>
         </div>`).join('')}
@@ -4951,7 +5148,7 @@ function AmbienteHTML(a){
 }
 function NPCHTML(n){
   return `
-  <div style="margin-bottom:20px;"><button class="btn btn-sm btn-ghost" onclick="App.fecharFicha()">← Voltar</button></div>
+  <div style="margin-bottom:20px;"><button class="btn btn-sm btn-ghost" onclick="App.npcFecharEdicao()">← Voltar à lista</button></div>
   <div class="panel"><div class="panel-head"><h3>${icon('caveira')} Adversário</h3></div><div class="panel-body">
     <div style="display:flex;gap:20px;flex-wrap:wrap;">
       ${RetratoThumbHTML(n)}
@@ -5178,7 +5375,7 @@ function NPCWizardHTML(){
   const dica = (t)=>`<p class="muted" style="margin:0 0 12px;font-size:13px;">${t}</p>`;
   let corpo = '';
   if(w.passo===0){
-    const baseSel = `<select onchange="App.npcwBase(this.value)"><option value="">— começar do zero —</option>${BESTIARIO.map((m,i)=>`<option value="${i}" ${w.base===i?'selected':''}>${esc(m.nome)} · ${esc(m.tipo)} · ${m.patamar}º patamar${m.fonte==='HF'?' · E&amp;M':''}</option>`).join('')}</select>`;
+    const baseSel = `<select onchange="App.npcwBase(this.value)"><option value="">— começar do zero —</option>${BESTIARIO.map((m,i)=>[m,i]).sort((a,b)=>a[0].nome.localeCompare(b[0].nome,'pt-BR',{sensitivity:'base'})).map(([m,i])=>`<option value="${i}" ${w.base===i?'selected':''}>${esc(m.nome)} · ${esc(m.tipo)} · ${m.patamar}º patamar${m.fonte==='HF'?' · E&amp;M':''}</option>`).join('')}</select>`;
     corpo = `<div class="panel"><div class="panel-head"><h3>Passo 1 — Conceito</h3></div><div class="panel-body">
       ${dica('Comece pelo papel que este adversário tem no conflito. O tipo define as estatísticas sugeridas; o patamar define o poder (1º patamar = nível 1, 2º = níveis 2–4, 3º = 5–7, 4º = 8–10).')}
       <div class="field"><label>Nome</label><input id="npcwNome" value="${esc(n.nome)}" oninput="App.npcwCampo('nome',this.value)" placeholder="Ex.: Bufão Dançarino da Lâmina"></div>
@@ -5342,9 +5539,9 @@ function ambienteDaBiblioteca(m){
 App.ambBibAdicionar = async (idx)=>{
   const m = AMBIENTES_HF[idx]; if(!m) return;
   const a = ambienteDaBiblioteca(m);
+  try{ await salvarUmaFicha(a, true); }catch(e){ console.error(e); }
   state.mostrandoAmbientes = false; state.abertaId = a.id; state.tableTab = 'ambientes';
   render();
-  try{ await salvarUmaFicha(a, true); }catch(e){ console.error(e); }
 };
 function AmbientesBibliotecaModal(){
   const pat = state.ambBibPatamar || 1, tipo = state.ambBibTipo || 'Todos', busca = (state.ambBibBusca||'').toLowerCase().trim();
