@@ -500,15 +500,21 @@ body.bm-fullscreen{overflow:hidden;}
 .bm-nevoa-sel{fill:none;stroke-width:3px;stroke-dasharray:10 6;}
 .bm-nevoa-sel.revelar{stroke:rgb(var(--tt-brilho-rgb));}
 .bm-nevoa-sel.cobrir{stroke:#8a8fff;}
-.bm-med-linha.ok{stroke:#7fe08a;}
-.bm-med-linha.corrida{stroke:#ffcf5a;}
-.bm-med-linha.longe{stroke:#ff6a5a;}
-.bm-med-ponto.ok{fill:#7fe08a;}
-.bm-med-ponto.corrida{fill:#ffcf5a;}
-.bm-med-ponto.longe{fill:#ff6a5a;}
-.bm-leitura.ok{color:#9ff0a8;border-color:#2f6b37;}
-.bm-leitura.corrida{color:#ffd77a;border-color:#7a5a1c;}
-.bm-leitura.longe{color:#ff8a7a;border-color:#7a2a20;}
+.bm-med-linha.r1{stroke:#7fe08a;}
+.bm-med-linha.r2{stroke:#5fd6c8;}
+.bm-med-linha.r3{stroke:#ffcf5a;}
+.bm-med-linha.r4{stroke:#ff9a4a;}
+.bm-med-linha.r5{stroke:#ff6a5a;}
+.bm-med-ponto.r1{fill:#7fe08a;}
+.bm-med-ponto.r2{fill:#5fd6c8;}
+.bm-med-ponto.r3{fill:#ffcf5a;}
+.bm-med-ponto.r4{fill:#ff9a4a;}
+.bm-med-ponto.r5{fill:#ff6a5a;}
+.bm-leitura.r1{color:#9ff0a8;border-color:#2f6b37;}
+.bm-leitura.r2{color:#8eeee2;border-color:#2a6b64;}
+.bm-leitura.r3{color:#ffd77a;border-color:#7a5a1c;}
+.bm-leitura.r4{color:#ffb97a;border-color:#7a4a1c;}
+.bm-leitura.r5{color:#ff8a7a;border-color:#7a2a20;}
 .bm-token.na-vez .bm-tk-img{box-shadow:0 0 0 4px rgba(var(--tt-brilho-rgb),.9), 0 0 24px rgba(var(--tt-brilho-rgb),.75);animation:bmVez 1.6s ease-in-out infinite;}
 @keyframes bmVez{50%{box-shadow:0 0 0 6px rgba(var(--tt-brilho-rgb),.5), 0 0 34px rgba(var(--tt-brilho-rgb),.5);}}
 .bm-token.caido .bm-tk-img{transform:rotate(80deg);filter:saturate(.6);}
@@ -1096,7 +1102,7 @@ body.bm-fullscreen{overflow:hidden;}
       bmConfig.cenas[id] = c;
       return bmSalvarConfig({cenas: Object.assign({}, bmConfig.cenas, {[id]: c})});
     }
-    function bmGradePadrao(){ return {visivel:true, cor:'#000000', opacidade:0.35, metros:1}; }
+    function bmGradePadrao(){ return {visivel:true, cor:'#000000', opacidade:0.35, metros:1.5}; }
     function bmCriarCena(comImagem){
       const id = 'cena_' + Date.now().toString(36);
       const n = Object.keys(bmConfig.cenas||{}).length + 1;
@@ -1771,8 +1777,10 @@ body.bm-fullscreen{overflow:hidden;}
       const dx = Math.round((b.x - a.x)/BM_CELL), dy = Math.round((b.y - a.y)/BM_CELL);
       const q = Math.max(Math.abs(dx), Math.abs(dy));
       const m = Math.round(q * bmMetros() * 10)/10;
-      let classe = '', extra = '';
-      if(mov){ if(m <= mov.mov){ classe = 'ok'; extra = ' · dentro do Movimento'; } else if(m <= mov.corrida){ classe = 'corrida'; extra = ' · exige Corrida'; } else { classe = 'longe'; extra = ' · além da Corrida'; } }
+      /* faixas de alcance do Daggerheart (regra opcional de grade): 1 / 3 / 6 / 12 quadrados / mais */
+      const FAIXAS = [[0,'',''],[1,'r1','Corpo a Corpo'],[3,'r2','Muito Próximo'],[6,'r3','Próximo'],[12,'r4','Distante'],[Infinity,'r5','Muito Distante']];
+      const fx = q===0 ? FAIXAS[0] : FAIXAS.slice(1).find(f=> q <= f[0]);
+      const classe = fx[1], extra = fx[2] ? ' · ' + fx[2] : '';
       const sw = 4/bmView.z;
       svg.innerHTML = `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" class="bm-med-linha ${classe}" style="stroke-width:${sw}px;stroke-dasharray:${12/bmView.z} ${8/bmView.z}"/><circle cx="${a.x}" cy="${a.y}" r="${7/bmView.z}" class="bm-med-ponto"/><circle cx="${b.x}" cy="${b.y}" r="${7/bmView.z}" class="bm-med-ponto ${classe}"/>`;
       if(leit){ leit.style.display = 'block'; leit.className = 'bm-leitura ' + classe; leit.textContent = `${q} ${q===1?'quadrado':'quadrados'} · ${String(m).replace('.',',')} m${extra}`; }
@@ -4518,19 +4526,19 @@ App.contagemRemover = (id)=>{
 /* ---------- editor de imagem unificado (capa, retrato, cartas) ---------- */
 App.abrirCropCapa = ()=>{
   const c = state.capa;
-  state.cropEditor = { kind:'capa', img: c?.img||'', scale: c?.scale||1, ox: c?.ox||0, oy: c?.oy||0, aspect:'16/9', titulo:'Capa da campanha' };
+  state.cropEditor = { kind:'capa', img: c?.img||'', scale: c?.scale||1, ox: c?.ox||0, oy: c?.oy||0, fit: c?.fit||'cobrir', aspect:'16/9', titulo:'Capa da campanha' };
   render();
 };
 App.abrirCropRetrato = (fichaId)=>{
   const f = getFicha(fichaId);
   const r = f.retrato;
-  state.cropEditor = { kind:'retrato', fichaId, img: r?.img||'', scale: r?.scale||1, ox: r?.ox||0, oy: r?.oy||0, aspect:'3/4', titulo:'Retrato' };
+  state.cropEditor = { kind:'retrato', fichaId, img: r?.img||'', scale: r?.scale||1, ox: r?.ox||0, oy: r?.oy||0, fit: r?.fit||'cobrir', aspect:'3/4', titulo:'Retrato' };
   render();
 };
 App.abrirCropCarta = (fichaId, cardKey, removivel, lista)=>{
   const f = getFicha(fichaId);
   const c = (f.cardImages||{})[cardKey];
-  state.cropEditor = { kind:'carta', fichaId, cardKey, img: c?.img||'', scale: c?.scale||1, ox: c?.ox||0, oy: c?.oy||0, aspect:'5/7', titulo:'Imagem da carta', removivel: !!removivel, lista };
+  state.cropEditor = { kind:'carta', fichaId, cardKey, img: c?.img||'', scale: c?.scale||1, ox: c?.ox||0, oy: c?.oy||0, fit: c?.fit||'cobrir', aspect:'5/7', titulo:'Imagem da carta', removivel: !!removivel, lista };
   render();
 };
 App.cropExcluirCarta = ()=>{
@@ -4543,6 +4551,7 @@ App.cropExcluirCarta = ()=>{
   state.cropEditor = null;
   render();
 };
+App.cropSetFit = (v)=>{ if(!state.cropEditor) return; state.cropEditor.fit = v; state.cropEditor.scale = 1; state.cropEditor.ox = 0; state.cropEditor.oy = 0; render(); };
 App.fecharCrop = ()=>{ state.cropEditor=null; render(); };
 App.mostrarCartaMesa = async (fichaId, cardKey)=>{
   const f = getFicha(fichaId);
@@ -4556,7 +4565,7 @@ App.mostrarCartaMesa = async (fichaId, cardKey)=>{
     ts: Date.now(), autor: state.usuario.nome, personagem: f.nome || 'Personagem',
     titulo: item.titulo, subtitulo: item.subtitulo, texto: item.texto,
     img: null, fid: f.id, cardKey,   // a imagem não vai junto: quem recebe já tem a da ficha (poupa download a cada abertura)
-    imgTransform: img ? imgTransform(img) : ''
+    imgTransform: img ? imgTransform(img) : '', imgFit: img ? imgFit(img) : 'cover'
   };
   espiaCartasUltimoTs = rec.ts; // evita o próprio broadcast reaparecer pra quem mandou
   state.spotlight = rec; render();
@@ -4598,7 +4607,7 @@ App.cropArquivo = (input)=>{
 App.cropRemover = ()=>{ state.cropEditor.img=''; render(); };
 App.cropSalvar = ()=>{
   const c = state.cropEditor;
-  const data = { img:c.img, scale:c.scale, ox:c.ox, oy:c.oy };
+  const data = { img:c.img, scale:c.scale, ox:c.ox, oy:c.oy, fit:c.fit||'cobrir' };
   state.cropEditor = null;
   if(c.kind==='mundo'){
     const item = mundoEncontrarItem(c.itemId, state.campanha.mundo.itens);
@@ -5322,9 +5331,12 @@ function imgSrc(s){
 function imgTransform(data){
   return `scale(${data.scale||1}) translate(${(data.ox||0)*100}%, ${(data.oy||0)*100}%)`;
 }
+const AJUSTES_IMG = [['cobrir','Preencher','Preenche o quadro e corta o que sobra'],['inteira','Inteira','Mostra a imagem toda, sem cortar (pode sobrar fundo)'],['esticar','Esticar','Estica a imagem para encher o quadro (deforma)']];
+function imgFit(data){ const f = data && data.fit; return f==='inteira'?'contain' : f==='esticar'?'fill' : 'cover'; }
+function imgStyle(data){ return `object-fit:${imgFit(data)};transform:${imgTransform(data)};`; }
 function CapaHTML(capa, curto){
   if(capa && capa.img){
-    return `<div class="cover ${curto?'short':''}"><img src="${imgSrc(capa.img)}" style="transform:${imgTransform(capa)};"></div>`;
+    return `<div class="cover ${curto?'short':''}"><img src="${imgSrc(capa.img)}" style="${imgStyle(capa)}"></div>`;
   }
   return `<div class="cover ${curto?'short':''}">✦</div>`;
 }
@@ -5588,7 +5600,7 @@ function todasTagsNPC(){
 }
 function npcRetratoHTML(n){
   const r = n.retrato;
-  if(r && r.img) return `<button onclick="App.abrirCropRetrato('${n.id}')" class="portrait" title="Trocar retrato" style="width:44px;display:flex;flex:none;">${`<img src="${imgSrc(r.img)}" style="transform:${imgTransform(r)};">`}</button>`;
+  if(r && r.img) return `<button onclick="App.abrirCropRetrato('${n.id}')" class="portrait" title="Trocar retrato" style="width:44px;display:flex;flex:none;">${`<img src="${imgSrc(r.img)}" style="${imgStyle(r)}">`}</button>`;
   return `<button onclick="App.abrirCropRetrato('${n.id}')" class="portrait" title="Adicionar retrato" style="width:64px;display:flex;flex:none;">✦</button>`;
 }
 function npcTagsHTML(n, editavel){
@@ -6138,9 +6150,9 @@ function CropEditorModal(){
              <span class="enq-h" data-c="nw"></span><span class="enq-h" data-c="ne"></span><span class="enq-h" data-c="sw"></span><span class="enq-h" data-c="se"></span>
            </div></div></div>`
       : `<div class="crop-frame" style="aspect-ratio:16/9;max-width:560px;margin:0 auto;"><div class="crop-empty">Escolha uma imagem para começar</div></div>`)
-    : `<div id="cropFrame" class="crop-frame" style="aspect-ratio:${aspectoCss(c)};max-width:340px;max-height:60vh;margin:0 auto;position:relative;">
+    : `${c.img? `<div class="row" style="gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:12px;" role="group" aria-label="Ajuste da imagem">${AJUSTES_IMG.map(([v,n,d])=>`<button class="btn btn-sm ${(c.fit||'cobrir')===v?'':'btn-ghost'}" title="${d}" aria-pressed="${(c.fit||'cobrir')===v}" onclick="App.cropSetFit('${v}')">${n}</button>`).join('')}</div>`:''}<div id="cropFrame" class="crop-frame" style="aspect-ratio:${aspectoCss(c)};max-width:340px;max-height:60vh;margin:0 auto;position:relative;">
       ${c.img
-        ? `<img id="cropImg" src="${c.img}" style="transform:${imgTransform(c)};">`
+        ? `<img id="cropImg" src="${c.img}" style="${imgStyle(c)}">`
         : `<div class="crop-empty">Escolha uma imagem para começar</div>`}
       ${ehCarta && c.img? `<div class="crop-guide-mesa"><span>o que aparece pra mesa</span></div>` : ''}
     </div>`}
@@ -6215,7 +6227,7 @@ function RetratoThumbHTML(f){
   const r = f.retrato;
   return `<div style="width:130px;flex-shrink:0;">
     <button onclick="App.abrirCropRetrato('${f.id}')" class="portrait" style="width:130px;display:flex;">
-      ${r && r.img? `<img src="${imgSrc(r.img)}" style="transform:${imgTransform(r)};">` : '✦'}
+      ${r && r.img? `<img src="${imgSrc(r.img)}" style="${imgStyle(r)}">` : '✦'}
     </button>
     <button class="btn btn-sm btn-block" style="margin-top:10px;" onclick="App.abrirCropRetrato('${f.id}')">${icon('imagem',15)} ${r && r.img? 'Trocar retrato':'Adicionar retrato'}</button>
   </div>`;
@@ -6336,7 +6348,7 @@ function SpotlightHTML(){
   return `<div class="spotlight-corner" onclick="App.expandirSpotlight()">
     <div class="spotlight-corner-card">
       <button class="spotlight-corner-close" onclick="event.stopPropagation();App.fecharSpotlight()">✕</button>
-      ${imagemDoSpotlight(r)? `<div class="spotlight-corner-img"><img src="${imgSrc(imagemDoSpotlight(r))}" style="transform:${r.imgTransform||''};"></div>` : `<div class="spotlight-corner-img" style="display:flex;align-items:center;justify-content:center;">${icon('carta',18)}</div>`}
+      ${imagemDoSpotlight(r)? `<div class="spotlight-corner-img"><img src="${imgSrc(imagemDoSpotlight(r))}" style="object-fit:${r.imgFit||'cover'};transform:${r.imgTransform||''};"></div>` : `<div class="spotlight-corner-img" style="display:flex;align-items:center;justify-content:center;">${icon('carta',18)}</div>`}
       <div class="spotlight-corner-body">
         <div class="spotlight-corner-by">${esc(r.autor)}${r.personagem? ' · '+esc(r.personagem):''} mostra</div>
         <div class="spotlight-corner-title">${esc(r.titulo)}</div>
@@ -6351,7 +6363,7 @@ function SpotlightExpandidoHTML(){
   return `<div class="modal-bg" onclick="App.fecharSpotlightExpandido()">
     <div class="spotlight-card" onclick="event.stopPropagation()">
       <button class="spotlight-close" onclick="App.fecharSpotlightExpandido()">✕</button>
-      ${imagemDoSpotlight(r)? `<div class="spotlight-img"><img src="${imgSrc(imagemDoSpotlight(r))}" style="transform:${r.imgTransform||''};"></div>` : ''}
+      ${imagemDoSpotlight(r)? `<div class="spotlight-img"><img src="${imgSrc(imagemDoSpotlight(r))}" style="object-fit:${r.imgFit||'cover'};transform:${r.imgTransform||''};"></div>` : ''}
       <div class="spotlight-body">
         <div class="spotlight-by">${esc(r.autor)}${r.personagem? ' · '+esc(r.personagem):''} mostra</div>
         <h3 class="spotlight-title">${esc(r.titulo)}</h3>
@@ -7118,7 +7130,7 @@ function cardTileHTML(f, it){
   return `<div class="cardtile">
     <div class="cardtile-img">
       <button onclick="App.abrirCropCarta('${f.id}','${key}',${it.removivel?'true':'false'},'${lista}')" style="position:absolute;inset:0;width:100%;height:100%;background:transparent;border:none;padding:0;cursor:pointer;">
-        ${img && img.img? `<img src="${imgSrc(img.img)}" style="transform:${imgTransform(img)};">` : `<div class="crop-empty" style="height:100%;">🂠</div>`}
+        ${img && img.img? `<img src="${imgSrc(img.img)}" style="${imgStyle(img)}">` : `<div class="crop-empty" style="height:100%;">🂠</div>`}
       </button>
       <span class="edit-btn">✎</span>
     </div>
